@@ -1,12 +1,138 @@
-﻿<Window x:Class="Badgey.MainWindow"
+<Window x:Class="Badgey.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Badgey"
-        mc:Ignorable="d"
-        Title="MainWindow" Height="450" Width="800">
-    <Grid>
+        Title="Badgey"
+        Width="620"
+        Height="460"
+        MinWidth="540"
+        MinHeight="420"
+        WindowStartupLocation="CenterScreen"
+        Background="#F4F5F6"
+        UseLayoutRounding="True">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#202124" />
+        </Style>
+    </Window.Resources>
 
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="0,0,0,18">
+            <TextBlock FontSize="24" FontWeight="SemiBold" Text="Badgey" />
+            <TextBlock Margin="0,3,0,0"
+                       Foreground="#61656B"
+                       Text="Program your 44 × 11 LED name badge" />
+        </StackPanel>
+
+        <TextBlock Grid.Row="1"
+                   Margin="0,0,0,6"
+                   FontWeight="SemiBold"
+                   Text="Message" />
+
+        <TextBox Grid.Row="2"
+                 MinHeight="36"
+                 Padding="9,6"
+                 VerticalContentAlignment="Center"
+                 FontSize="15"
+                 Text="{Binding Message, UpdateSourceTrigger=PropertyChanged}" />
+
+        <Grid Grid.Row="3" Margin="0,16,0,18">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="150" />
+                <ColumnDefinition Width="24" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="72" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <TextBlock Grid.Column="0"
+                       Margin="0,0,8,0"
+                       VerticalAlignment="Center"
+                       Text="Mode" />
+            <ComboBox Grid.Column="1"
+                      MinHeight="32"
+                      Padding="7,4"
+                      DisplayMemberPath="Label"
+                      ItemsSource="{Binding Modes}"
+                      SelectedItem="{Binding SelectedMode}" />
+
+            <TextBlock Grid.Column="3"
+                       Margin="0,0,8,0"
+                       VerticalAlignment="Center"
+                       Text="Speed" />
+            <ComboBox Grid.Column="4"
+                      MinHeight="32"
+                      Padding="7,4"
+                      HorizontalContentAlignment="Center"
+                      ItemsSource="{Binding Speeds}"
+                      SelectedItem="{Binding Speed}" />
+
+            <Button Grid.Column="6"
+                    MinWidth="110"
+                    MinHeight="34"
+                    Padding="16,6"
+                    IsDefault="True"
+                    Command="{Binding SendCommand}"
+                    Content="Send" />
+        </Grid>
+
+        <Grid Grid.Row="4">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <DockPanel Grid.Row="0" Margin="0,0,0,7">
+                <TextBlock DockPanel.Dock="Left"
+                           FontWeight="SemiBold"
+                           Text="Preview" />
+                <TextBlock HorizontalAlignment="Right"
+                           Foreground="#73777D"
+                           Text="First 44-pixel viewport" />
+            </DockPanel>
+
+            <Border Grid.Row="1"
+                    MinHeight="118"
+                    Padding="10"
+                    Background="#E5E8E6"
+                    BorderBrush="#CED3CF"
+                    BorderThickness="1"
+                    CornerRadius="8">
+                <local:LedMatrixPreview Bitmap="{Binding PreviewBitmap}"
+                                        IsScrolling="{Binding IsPreviewScrolling}"
+                                        Speed="{Binding Speed}" />
+            </Border>
+        </Grid>
+
+        <Grid Grid.Row="5" Margin="0,16,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <TextBlock Grid.Column="0"
+                       VerticalAlignment="Center"
+                       Foreground="#50545A"
+                       Text="{Binding StatusText}" />
+            <ProgressBar Grid.Column="1"
+                         Width="92"
+                         Height="4"
+                         Margin="12,0,0,0"
+                         VerticalAlignment="Center"
+                         IsIndeterminate="True"
+                         Visibility="{Binding IsBusy, Converter={StaticResource BooleanToVisibilityConverter}}" />
+        </Grid>
     </Grid>
 </Window>

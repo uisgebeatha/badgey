@@ -8,4 +8,10 @@
     <UseWPF>true</UseWPF>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\Badgey.Hardware\Badgey.Hardware.csproj" />
+    <ProjectReference Include="..\Badgey.Protocol\Badgey.Protocol.csproj" />
+    <ProjectReference Include="..\Badgey.Rendering\Badgey.Rendering.csproj" />
+  </ItemGroup>
+
 </Project>
