@@ -1,10 +1,12 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Badgey.Hardware/Badgey.Hardware.csproj" />
+    <Project Path="src/Badgey.Rendering/Badgey.Rendering.csproj" />
     <Project Path="src/Badgey/Badgey.csproj" />
     <Project Path="src/Badgey.Protocol/Badgey.Protocol.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Badgey.Rendering.Tests/Badgey.Rendering.Tests.csproj" />
     <Project Path="tests/Badgey.Tests/Badgey.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">

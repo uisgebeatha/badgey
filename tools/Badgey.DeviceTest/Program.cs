@@ -1,17 +1,15 @@
 using Badgey.Hardware;
 using Badgey.Protocol;
+using Badgey.Rendering;
 
-// A pre-packed 40 x 11 hollow rectangle: five eight-pixel byte-columns,
-// with one byte per display row. It leaves a two-pixel margin on each side
-// of the 44 x 11 badge when shown in static-centred mode.
-byte[] testPattern =
-[
-    0xFF, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0xFF,
-    0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF,
-    0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF,
-    0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF,
-    0xFF, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0xFF,
-];
+var message = string.Join(' ', args);
+
+if (string.IsNullOrWhiteSpace(message))
+{
+    Console.Error.WriteLine(
+        "Usage: dotnet run --project .\\tools\\Badgey.DeviceTest\\Badgey.DeviceTest.csproj -- \"message text\"");
+    return 2;
+}
 
 using var transport = new BadgeHidTransport();
 
@@ -25,13 +23,17 @@ try
     transport.Open();
     Console.WriteLine("Badge opened.");
 
+    var renderer = new WindowsTextRenderer();
+    var bitmap = renderer.Render(message);
+    var packedBitmap = BadgeBitmapPacker.Pack(bitmap);
     var upload = BadgeProtocol.CreateUpload(
-        testPattern,
-        BadgeDisplayMode.StaticCentered,
-        speed: 1);
+        packedBitmap,
+        BadgeDisplayMode.ScrollLeft,
+        speed: 4);
 
-    Console.WriteLine(
-        $"Sending a static 40 x 11 hollow rectangle ({upload.Length} protocol bytes)...");
+    Console.WriteLine($"Rendered size: {bitmap.Width} x {bitmap.Height} pixels.");
+    Console.WriteLine($"Protocol size: {upload.Length} bytes.");
+    Console.WriteLine("Sending in scroll-left mode at speed 4...");
     transport.Write(upload);
     Console.WriteLine("Upload succeeded.");
 
