@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Badgey/Badgey.csproj" />
+    <Project Path="src/Badgey.Protocol/Badgey.Protocol.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Badgey.Tests/Badgey.Tests.csproj" />

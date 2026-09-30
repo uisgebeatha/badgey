@@ -18,4 +18,8 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Badgey.Protocol\Badgey.Protocol.csproj" />
+  </ItemGroup>
+
 </Project>
