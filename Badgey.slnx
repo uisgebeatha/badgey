@@ -8,6 +8,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/Badgey.Rendering.Tests/Badgey.Rendering.Tests.csproj" />
     <Project Path="tests/Badgey.Tests/Badgey.Tests.csproj" />
+    <Project Path="tests/Badgey.Wpf.Tests/Badgey.Wpf.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/Badgey.DeviceTest/Badgey.DeviceTest.csproj" />

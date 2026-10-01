@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.IO;
 using System.Runtime.CompilerServices;
 using Badgey.Hardware;
 using Badgey.Protocol;
@@ -8,36 +9,107 @@ namespace Badgey;
 
 public sealed class MainWindowViewModel : INotifyPropertyChanged
 {
+    private const int GraphicRepeatGapColumns = 4;
+    private const int TextRepeatGapColumns = BadgeProtocol.DisplayWidth;
+
+    // Largest logical width whose packed bitmap still fits one protocol upload.
+    private const int MaximumUploadBitmapWidth =
+        ((BadgeProtocol.MaximumUploadSize - BadgeProtocol.HeaderSize)
+            / BadgeBitmapPacker.RequiredHeight)
+        * BadgeBitmapPacker.PixelsPerByte;
+
     private readonly BadgeController _controller;
+    private readonly GraphicBitmapState _graphicState = new();
     private string _message = "Hello Badgey";
+    private ContentOption _selectedContent;
     private ModeOption _selectedMode;
     private int _speed = 4;
-    private MonochromeBitmap _previewBitmap = new(0, BadgeBitmapPacker.RequiredHeight);
+    private MonochromeBitmap _textBitmap = CreateEmptyBitmap();
+    private MonochromeBitmap _previewBitmap = CreateEmptyBitmap();
+    private string _selectedFileName = "No image selected";
     private string _statusText = "Ready.";
     private bool _isBusy;
-    private bool _previewIsValid;
+    private bool _textPreviewIsValid;
 
     public MainWindowViewModel(BadgeController controller)
     {
         _controller = controller ?? throw new ArgumentNullException(nameof(controller));
+        ContentTypes =
+        [
+            new ContentOption("Text", BadgeContentKind.Text),
+            new ContentOption("Graphic", BadgeContentKind.Graphic),
+        ];
         Modes =
         [
             new ModeOption("Scroll Left", BadgeDisplayMode.ScrollLeft),
             new ModeOption("Static Centered", BadgeDisplayMode.StaticCentered),
         ];
         Speeds = Enumerable.Range(1, 8).ToArray();
+        _selectedContent = ContentTypes[0];
         _selectedMode = Modes[0];
         SendCommand = new AsyncRelayCommand(SendAsync, CanSend);
-        UpdatePreview();
+        UpdateTextBitmap();
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
+
+    public IReadOnlyList<ContentOption> ContentTypes { get; }
 
     public IReadOnlyList<ModeOption> Modes { get; }
 
     public IReadOnlyList<int> Speeds { get; }
 
     public AsyncRelayCommand SendCommand { get; }
+
+    public ContentOption SelectedContent
+    {
+        get => _selectedContent;
+        set
+        {
+            if (value is null || !SetField(ref _selectedContent, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(IsTextContent));
+            OnPropertyChanged(nameof(IsGraphicContent));
+            OnPropertyChanged(nameof(PreviewRepeatGap));
+            OnPropertyChanged(nameof(PreviewRepeatGapIsLit));
+            UpdateActivePreview();
+        }
+    }
+
+    public bool IsTextContent => SelectedContent.Value == BadgeContentKind.Text;
+
+    public bool IsGraphicContent => SelectedContent.Value == BadgeContentKind.Graphic;
+
+    public bool IsGraphicInverted
+    {
+        get => _graphicState.IsInverted;
+        set
+        {
+            if (_graphicState.Source is null || _graphicState.IsInverted == value)
+            {
+                return;
+            }
+
+            _graphicState.SetInverted(value);
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(PreviewRepeatGapIsLit));
+
+            if (IsGraphicContent)
+            {
+                UpdateActivePreview();
+            }
+        }
+    }
+
+    public int PreviewRepeatGap => IsGraphicContent
+        ? GraphicRepeatGapColumns
+        : TextRepeatGapColumns;
+
+    public bool PreviewRepeatGapIsLit =>
+        IsGraphicContent && _graphicState.IsInverted;
 
     public string Message
     {
@@ -49,8 +121,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                 return;
             }
 
-            UpdatePreview();
-            SendCommand.RaiseCanExecuteChanged();
+            UpdateTextBitmap();
         }
     }
 
@@ -59,9 +130,16 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         get => _selectedMode;
         set
         {
-            if (SetField(ref _selectedMode, value))
+            if (value is null || !SetField(ref _selectedMode, value))
             {
-                OnPropertyChanged(nameof(IsPreviewScrolling));
+                return;
+            }
+
+            OnPropertyChanged(nameof(IsPreviewScrolling));
+
+            if (IsGraphicContent)
+            {
+                UpdateActivePreview();
             }
         }
     }
@@ -80,6 +158,12 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         private set => SetField(ref _previewBitmap, value);
     }
 
+    public string SelectedFileName
+    {
+        get => _selectedFileName;
+        private set => SetField(ref _selectedFileName, value);
+    }
+
     public string StatusText
     {
         get => _statusText;
@@ -93,23 +177,103 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         {
             if (SetField(ref _isBusy, value))
             {
+                OnPropertyChanged(nameof(CanLoadGraphic));
+                OnPropertyChanged(nameof(CanInvertGraphic));
                 SendCommand.RaiseCanExecuteChanged();
             }
         }
     }
 
-    private bool CanSend() =>
-        !IsBusy && _previewIsValid && !string.IsNullOrWhiteSpace(Message);
+    public bool CanLoadGraphic => !IsBusy;
+
+    public bool CanInvertGraphic => !IsBusy && _graphicState.Source is not null;
+
+    public void LoadGraphic(string path)
+    {
+        if (IsBusy)
+        {
+            return;
+        }
+
+        try
+        {
+            var bitmap = _controller.RenderImage(path);
+            _graphicState.Load(bitmap);
+            OnPropertyChanged(nameof(IsGraphicInverted));
+            OnPropertyChanged(nameof(PreviewRepeatGapIsLit));
+            OnPropertyChanged(nameof(CanInvertGraphic));
+            SelectedFileName = Path.GetFileName(path);
+
+            if (IsGraphicContent)
+            {
+                UpdateActivePreview();
+            }
+        }
+        catch (Exception)
+        {
+            if (IsGraphicContent)
+            {
+                StatusText = "Could not load this image. Choose a PNG, JPEG, or BMP file.";
+            }
+        }
+
+        SendCommand.RaiseCanExecuteChanged();
+    }
+
+    private bool CanSend()
+    {
+        if (IsBusy)
+        {
+            return false;
+        }
+
+        return SelectedContent.Value switch
+        {
+            BadgeContentKind.Text =>
+                _textPreviewIsValid && !string.IsNullOrWhiteSpace(Message),
+            BadgeContentKind.Graphic => _graphicState.Source is { Width: > 0 },
+            _ => false,
+        };
+    }
 
     private async Task SendAsync()
     {
+        var contentKind = SelectedContent.Value;
+        var bitmap = contentKind == BadgeContentKind.Text
+            ? _textBitmap
+            : _graphicState.Current;
+
+        if (bitmap is null)
+        {
+            return;
+        }
+
+        var mode = SelectedMode.Value;
+        var repeatGapIsLit = contentKind == BadgeContentKind.Graphic
+            && _graphicState.IsInverted;
+
         IsBusy = true;
         StatusText = "Connecting to badge…";
 
         try
         {
-            await _controller.SendAsync(PreviewBitmap, SelectedMode.Value, Speed);
-            StatusText = "Message sent successfully.";
+            if (contentKind == BadgeContentKind.Graphic
+                && mode == BadgeDisplayMode.ScrollLeft)
+            {
+                // The firmware adds its own terminal display-width gap. Filling
+                // the documented upload capacity with four-column-spaced copies
+                // makes that unavoidable terminal gap occur much less often.
+                bitmap = MonochromeBitmapRepeater.RepeatToMaximumWidth(
+                    bitmap,
+                    GraphicRepeatGapColumns,
+                    MaximumUploadBitmapWidth,
+                    gapValue: repeatGapIsLit);
+            }
+
+            await _controller.SendAsync(bitmap, mode, Speed);
+            StatusText = contentKind == BadgeContentKind.Text
+                ? "Message sent successfully."
+                : "Graphic sent successfully.";
         }
         catch (BadgeDeviceNotFoundException)
         {
@@ -121,11 +285,15 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
         catch (BadgeDeviceWriteException)
         {
-            StatusText = "Could not write the message to the badge.";
+            StatusText = contentKind == BadgeContentKind.Text
+                ? "Could not write the message to the badge."
+                : "Could not write the graphic to the badge.";
         }
         catch (ArgumentException)
         {
-            StatusText = "The message is too long for the badge.";
+            StatusText = contentKind == BadgeContentKind.Text
+                ? "The message is too long for the badge."
+                : "The graphic is too wide for the badge.";
         }
         catch (Exception)
         {
@@ -137,42 +305,81 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
     }
 
-    private void UpdatePreview()
+    private void UpdateTextBitmap()
     {
         if (string.IsNullOrWhiteSpace(Message))
         {
-            PreviewBitmap = new MonochromeBitmap(0, BadgeBitmapPacker.RequiredHeight);
-            _previewIsValid = false;
+            _textBitmap = CreateEmptyBitmap();
+            _textPreviewIsValid = false;
+        }
+        else
+        {
+            try
+            {
+                _textBitmap = _controller.Render(Message);
+                _textPreviewIsValid = true;
+            }
+            catch (Exception)
+            {
+                _textBitmap = CreateEmptyBitmap();
+                _textPreviewIsValid = false;
+            }
+        }
+
+        if (IsTextContent)
+        {
+            UpdateActivePreview();
+        }
+        else
+        {
+            SendCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    private void UpdateActivePreview()
+    {
+        if (IsTextContent)
+        {
+            PreviewBitmap = _textBitmap;
 
             if (!IsBusy)
             {
-                StatusText = "Enter a message to send.";
+                StatusText = string.IsNullOrWhiteSpace(Message)
+                    ? "Enter a message to send."
+                    : _textPreviewIsValid
+                        ? "Ready."
+                        : "Could not render this message.";
             }
-
-            return;
         }
-
-        try
+        else if (_graphicState.Current is not { } graphicBitmap)
         {
-            PreviewBitmap = _controller.Render(Message);
-            _previewIsValid = true;
+            PreviewBitmap = CreateEmptyBitmap();
+
+            if (!IsBusy)
+            {
+                StatusText = "Load an image to send.";
+            }
+        }
+        else
+        {
+            PreviewBitmap = SelectedMode.Value == BadgeDisplayMode.StaticCentered
+                ? MonochromeBitmapViewport.Create(
+                    graphicBitmap,
+                    BadgeProtocol.DisplayWidth,
+                    centerNarrow: true)
+                : graphicBitmap;
 
             if (!IsBusy)
             {
                 StatusText = "Ready.";
             }
         }
-        catch (Exception)
-        {
-            PreviewBitmap = new MonochromeBitmap(0, BadgeBitmapPacker.RequiredHeight);
-            _previewIsValid = false;
 
-            if (!IsBusy)
-            {
-                StatusText = "Could not render this message.";
-            }
-        }
+        SendCommand.RaiseCanExecuteChanged();
     }
+
+    private static MonochromeBitmap CreateEmptyBitmap() =>
+        new(0, BadgeBitmapPacker.RequiredHeight);
 
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
     {
@@ -189,5 +396,13 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null) =>
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 }
+
+public enum BadgeContentKind
+{
+    Text,
+    Graphic,
+}
+
+public sealed record ContentOption(string Label, BadgeContentKind Value);
 
 public sealed record ModeOption(string Label, BadgeDisplayMode Value);

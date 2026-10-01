@@ -30,6 +30,19 @@ public sealed class LedMatrixPreview : FrameworkElement
         new FrameworkPropertyMetadata(4, OnAnimationInputChanged),
         value => value is >= 1 and <= 8);
 
+    public static readonly DependencyProperty ScrollRepeatGapProperty = DependencyProperty.Register(
+        nameof(ScrollRepeatGap),
+        typeof(int),
+        typeof(LedMatrixPreview),
+        new FrameworkPropertyMetadata(BadgeProtocol.DisplayWidth, OnAnimationInputChanged),
+        value => value is >= 0);
+
+    public static readonly DependencyProperty ScrollRepeatGapIsLitProperty = DependencyProperty.Register(
+        nameof(ScrollRepeatGapIsLit),
+        typeof(bool),
+        typeof(LedMatrixPreview),
+        new FrameworkPropertyMetadata(false, OnAnimationInputChanged));
+
     private static readonly Brush BackgroundBrush = CreateBrush(0x10, 0x18, 0x12);
     private static readonly Brush UnlitBrush = CreateBrush(0x20, 0x30, 0x23);
     private static readonly Brush LitBrush = CreateBrush(0x69, 0xF0, 0x73);
@@ -66,6 +79,18 @@ public sealed class LedMatrixPreview : FrameworkElement
         set => SetValue(SpeedProperty, value);
     }
 
+    public int ScrollRepeatGap
+    {
+        get => (int)GetValue(ScrollRepeatGapProperty);
+        set => SetValue(ScrollRepeatGapProperty, value);
+    }
+
+    public bool ScrollRepeatGapIsLit
+    {
+        get => (bool)GetValue(ScrollRepeatGapIsLitProperty);
+        set => SetValue(ScrollRepeatGapIsLitProperty, value);
+    }
+
     protected override void OnRender(DrawingContext drawingContext)
     {
         base.OnRender(drawingContext);
@@ -98,11 +123,12 @@ public sealed class LedMatrixPreview : FrameworkElement
             for (var x = 0; x < BadgeProtocol.DisplayWidth; x++)
             {
                 var sourceX = GetSourceColumn(x);
-                var isLit = Bitmap is not null
-                    && sourceX >= 0
-                    && sourceX < Bitmap.Width
-                    && y < Bitmap.Height
-                    && Bitmap[sourceX, y];
+                var isLit = sourceX < 0
+                    ? IsScrolling && ScrollRepeatGapIsLit
+                    : Bitmap is not null
+                        && sourceX < Bitmap.Width
+                        && y < Bitmap.Height
+                        && Bitmap[sourceX, y];
                 var pixelRect = new Rect(
                     offsetX + (x * cellSize) + inset,
                     offsetY + (y * cellSize) + inset,
@@ -121,13 +147,15 @@ public sealed class LedMatrixPreview : FrameworkElement
 
     private int GetSourceColumn(int viewportX)
     {
-        if (!IsScrolling || Bitmap is null)
+        if (!IsScrolling || Bitmap is not { Width: > 0 })
         {
             return viewportX;
         }
 
-        var cycleWidth = Bitmap.Width + BadgeProtocol.DisplayWidth;
-        return (viewportX + _scrollOffset) % cycleWidth;
+        return MonochromeBitmapLoop.GetSourceColumn(
+            Bitmap.Width,
+            ScrollRepeatGap,
+            viewportX + _scrollOffset);
     }
 
     private void RestartAnimation()
@@ -152,7 +180,9 @@ public sealed class LedMatrixPreview : FrameworkElement
             return;
         }
 
-        var cycleWidth = Bitmap.Width + BadgeProtocol.DisplayWidth;
+        var cycleWidth = MonochromeBitmapLoop.GetCycleWidth(
+            Bitmap.Width,
+            ScrollRepeatGap);
         _scrollOffset = (_scrollOffset + 1) % cycleWidth;
         InvalidateVisual();
     }
@@ -167,7 +197,7 @@ public sealed class LedMatrixPreview : FrameworkElement
         ((LedMatrixPreview)dependencyObject).RestartAnimation();
 
     private static TimeSpan GetScrollInterval(int speed) =>
-        TimeSpan.FromMilliseconds(320 - ((speed - 1) * 35));
+        PreviewScrollTiming.GetInterval(speed);
 
     private static Brush CreateBrush(byte red, byte green, byte blue)
     {

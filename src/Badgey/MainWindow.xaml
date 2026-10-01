@@ -4,9 +4,9 @@
         xmlns:local="clr-namespace:Badgey"
         Title="Badgey"
         Width="620"
-        Height="460"
+        Height="500"
         MinWidth="540"
-        MinHeight="420"
+        MinHeight="460"
         WindowStartupLocation="CenterScreen"
         Background="#F4F5F6"
         UseLayoutRounding="True">
@@ -34,17 +34,69 @@
                        Text="Program your 44 × 11 LED name badge" />
         </StackPanel>
 
-        <TextBlock Grid.Row="1"
-                   Margin="0,0,0,6"
-                   FontWeight="SemiBold"
-                   Text="Message" />
+        <Grid Grid.Row="1" Margin="0,0,0,14">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="150" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
 
-        <TextBox Grid.Row="2"
-                 MinHeight="36"
-                 Padding="9,6"
-                 VerticalContentAlignment="Center"
-                 FontSize="15"
-                 Text="{Binding Message, UpdateSourceTrigger=PropertyChanged}" />
+            <TextBlock Grid.Column="0"
+                       Margin="0,0,8,0"
+                       VerticalAlignment="Center"
+                       Text="Content" />
+            <ComboBox Grid.Column="1"
+                      MinHeight="32"
+                      Padding="7,4"
+                      DisplayMemberPath="Label"
+                      ItemsSource="{Binding ContentTypes}"
+                      SelectedItem="{Binding SelectedContent}" />
+        </Grid>
+
+        <Grid Grid.Row="2">
+            <StackPanel Visibility="{Binding IsTextContent, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <TextBlock Margin="0,0,0,6"
+                           FontWeight="SemiBold"
+                           Text="Message" />
+                <TextBox MinHeight="36"
+                         Padding="9,6"
+                         VerticalContentAlignment="Center"
+                         FontSize="15"
+                         Text="{Binding Message, UpdateSourceTrigger=PropertyChanged}" />
+            </StackPanel>
+
+            <StackPanel Visibility="{Binding IsGraphicContent, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <TextBlock Margin="0,0,0,6"
+                           FontWeight="SemiBold"
+                           Text="Graphic" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <Button Grid.Column="0"
+                            MinHeight="36"
+                            Padding="14,6"
+                            Click="LoadImageButton_Click"
+                            Content="Load Image"
+                            IsEnabled="{Binding CanLoadGraphic}" />
+                    <TextBlock Grid.Column="1"
+                               Margin="12,0,0,0"
+                               VerticalAlignment="Center"
+                               Foreground="#61656B"
+                               Text="{Binding SelectedFileName}"
+                               TextTrimming="CharacterEllipsis" />
+                    <CheckBox Grid.Column="2"
+                              Margin="16,0,0,0"
+                              VerticalAlignment="Center"
+                              Content="Invert"
+                              IsEnabled="{Binding CanInvertGraphic}"
+                              IsChecked="{Binding IsGraphicInverted}" />
+                </Grid>
+            </StackPanel>
+        </Grid>
 
         <Grid Grid.Row="3" Margin="0,16,0,18">
             <Grid.ColumnDefinitions>
@@ -100,7 +152,7 @@
                            Text="Preview" />
                 <TextBlock HorizontalAlignment="Right"
                            Foreground="#73777D"
-                           Text="First 44-pixel viewport" />
+                           Text="44 × 11 display preview" />
             </DockPanel>
 
             <Border Grid.Row="1"
@@ -112,6 +164,8 @@
                     CornerRadius="8">
                 <local:LedMatrixPreview Bitmap="{Binding PreviewBitmap}"
                                         IsScrolling="{Binding IsPreviewScrolling}"
+                                        ScrollRepeatGap="{Binding PreviewRepeatGap}"
+                                        ScrollRepeatGapIsLit="{Binding PreviewRepeatGapIsLit}"
                                         Speed="{Binding Speed}" />
             </Border>
         </Grid>
