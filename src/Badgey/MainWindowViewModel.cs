@@ -20,13 +20,16 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     private readonly BadgeController _controller;
     private readonly GraphicBitmapState _graphicState = new();
+    private readonly AnimationBitmapState _animationState = new();
     private string _message = "Hello Badgey";
     private ContentOption _selectedContent;
     private ModeOption _selectedMode;
     private int _speed = 4;
     private MonochromeBitmap _textBitmap = CreateEmptyBitmap();
     private MonochromeBitmap _previewBitmap = CreateEmptyBitmap();
+    private MonochromeAnimation? _previewAnimation;
     private string _selectedFileName = "No image selected";
+    private string _selectedAnimationFileName = "No GIF selected";
     private string _statusText = "Ready.";
     private bool _isBusy;
     private bool _textPreviewIsValid;
@@ -38,6 +41,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         [
             new ContentOption("Text", BadgeContentKind.Text),
             new ContentOption("Graphic", BadgeContentKind.Graphic),
+            new ContentOption("Animation", BadgeContentKind.Animation),
         ];
         Modes =
         [
@@ -73,6 +77,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
             OnPropertyChanged(nameof(IsTextContent));
             OnPropertyChanged(nameof(IsGraphicContent));
+            OnPropertyChanged(nameof(IsAnimationContent));
+            OnPropertyChanged(nameof(IsTextOrGraphicContent));
+            OnPropertyChanged(nameof(IsPreviewScrolling));
             OnPropertyChanged(nameof(PreviewRepeatGap));
             OnPropertyChanged(nameof(PreviewRepeatGapIsLit));
             UpdateActivePreview();
@@ -82,6 +89,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public bool IsTextContent => SelectedContent.Value == BadgeContentKind.Text;
 
     public bool IsGraphicContent => SelectedContent.Value == BadgeContentKind.Graphic;
+
+    public bool IsAnimationContent => SelectedContent.Value == BadgeContentKind.Animation;
+
+    public bool IsTextOrGraphicContent => !IsAnimationContent;
 
     public bool IsGraphicInverted
     {
@@ -110,6 +121,26 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     public bool PreviewRepeatGapIsLit =>
         IsGraphicContent && _graphicState.IsInverted;
+
+    public bool IsAnimationInverted
+    {
+        get => _animationState.IsInverted;
+        set
+        {
+            if (_animationState.Source is null || _animationState.IsInverted == value)
+            {
+                return;
+            }
+
+            _animationState.SetInverted(value);
+            OnPropertyChanged();
+
+            if (IsAnimationContent)
+            {
+                UpdateActivePreview();
+            }
+        }
+    }
 
     public string Message
     {
@@ -144,7 +175,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
     }
 
-    public bool IsPreviewScrolling => SelectedMode.Value == BadgeDisplayMode.ScrollLeft;
+    public bool IsPreviewScrolling =>
+        !IsAnimationContent && SelectedMode.Value == BadgeDisplayMode.ScrollLeft;
 
     public int Speed
     {
@@ -158,11 +190,29 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         private set => SetField(ref _previewBitmap, value);
     }
 
+    public MonochromeAnimation? PreviewAnimation
+    {
+        get => _previewAnimation;
+        private set => SetField(ref _previewAnimation, value);
+    }
+
     public string SelectedFileName
     {
         get => _selectedFileName;
         private set => SetField(ref _selectedFileName, value);
     }
+
+    public string SelectedAnimationFileName
+    {
+        get => _selectedAnimationFileName;
+        private set => SetField(ref _selectedAnimationFileName, value);
+    }
+
+    public string AnimationFrameCountText => _animationState.Source is { } animation
+        ? animation.FrameCount == 1
+            ? "1 frame"
+            : $"{animation.FrameCount} frames"
+        : "No frames";
 
     public string StatusText
     {
@@ -179,6 +229,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             {
                 OnPropertyChanged(nameof(CanLoadGraphic));
                 OnPropertyChanged(nameof(CanInvertGraphic));
+                OnPropertyChanged(nameof(CanLoadAnimation));
+                OnPropertyChanged(nameof(CanInvertAnimation));
                 SendCommand.RaiseCanExecuteChanged();
             }
         }
@@ -187,6 +239,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public bool CanLoadGraphic => !IsBusy;
 
     public bool CanInvertGraphic => !IsBusy && _graphicState.Source is not null;
+
+    public bool CanLoadAnimation => !IsBusy;
+
+    public bool CanInvertAnimation => !IsBusy && _animationState.Source is not null;
 
     public void LoadGraphic(string path)
     {
@@ -220,6 +276,38 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         SendCommand.RaiseCanExecuteChanged();
     }
 
+    public void LoadAnimation(string path)
+    {
+        if (IsBusy)
+        {
+            return;
+        }
+
+        try
+        {
+            var animation = _controller.RenderAnimation(path);
+            _animationState.Load(animation);
+            OnPropertyChanged(nameof(IsAnimationInverted));
+            OnPropertyChanged(nameof(AnimationFrameCountText));
+            OnPropertyChanged(nameof(CanInvertAnimation));
+            SelectedAnimationFileName = Path.GetFileName(path);
+
+            if (IsAnimationContent)
+            {
+                UpdateActivePreview();
+            }
+        }
+        catch (Exception)
+        {
+            if (IsAnimationContent)
+            {
+                StatusText = "Could not load this animation. Choose an animated GIF file.";
+            }
+        }
+
+        SendCommand.RaiseCanExecuteChanged();
+    }
+
     private bool CanSend()
     {
         if (IsBusy)
@@ -232,6 +320,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             BadgeContentKind.Text =>
                 _textPreviewIsValid && !string.IsNullOrWhiteSpace(Message),
             BadgeContentKind.Graphic => _graphicState.Source is { Width: > 0 },
+            BadgeContentKind.Animation => _animationState.Source is { FrameCount: > 0 },
             _ => false,
         };
     }
@@ -239,11 +328,17 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private async Task SendAsync()
     {
         var contentKind = SelectedContent.Value;
-        var bitmap = contentKind == BadgeContentKind.Text
-            ? _textBitmap
-            : _graphicState.Current;
+        var bitmap = contentKind switch
+        {
+            BadgeContentKind.Text => _textBitmap,
+            BadgeContentKind.Graphic => _graphicState.Current,
+            _ => null,
+        };
+        var animation = contentKind == BadgeContentKind.Animation
+            ? _animationState.Current
+            : null;
 
-        if (bitmap is null)
+        if (bitmap is null && animation is null)
         {
             return;
         }
@@ -264,16 +359,28 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                 // the documented upload capacity with four-column-spaced copies
                 // makes that unavoidable terminal gap occur much less often.
                 bitmap = MonochromeBitmapRepeater.RepeatToMaximumWidth(
-                    bitmap,
+                    bitmap!,
                     GraphicRepeatGapColumns,
                     MaximumUploadBitmapWidth,
                     gapValue: repeatGapIsLit);
             }
 
-            await _controller.SendAsync(bitmap, mode, Speed);
-            StatusText = contentKind == BadgeContentKind.Text
-                ? "Message sent successfully."
-                : "Graphic sent successfully.";
+            if (contentKind == BadgeContentKind.Animation)
+            {
+                await _controller.SendAnimationAsync(animation!, Speed);
+            }
+            else
+            {
+                await _controller.SendAsync(bitmap!, mode, Speed);
+            }
+
+            StatusText = contentKind switch
+            {
+                BadgeContentKind.Text => "Message sent successfully.",
+                BadgeContentKind.Graphic => "Graphic sent successfully.",
+                BadgeContentKind.Animation => "Animation sent successfully.",
+                _ => "Content sent successfully.",
+            };
         }
         catch (BadgeDeviceNotFoundException)
         {
@@ -285,15 +392,23 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
         catch (BadgeDeviceWriteException)
         {
-            StatusText = contentKind == BadgeContentKind.Text
-                ? "Could not write the message to the badge."
-                : "Could not write the graphic to the badge.";
+            StatusText = contentKind switch
+            {
+                BadgeContentKind.Text => "Could not write the message to the badge.",
+                BadgeContentKind.Graphic => "Could not write the graphic to the badge.",
+                BadgeContentKind.Animation => "Could not write the animation to the badge.",
+                _ => "Could not write to the badge.",
+            };
         }
         catch (ArgumentException)
         {
-            StatusText = contentKind == BadgeContentKind.Text
-                ? "The message is too long for the badge."
-                : "The graphic is too wide for the badge.";
+            StatusText = contentKind switch
+            {
+                BadgeContentKind.Text => "The message is too long for the badge.",
+                BadgeContentKind.Graphic => "The graphic is too wide for the badge.",
+                BadgeContentKind.Animation => "The animation has too many frames for the badge.",
+                _ => "The content is too large for the badge.",
+            };
         }
         catch (Exception)
         {
@@ -338,8 +453,21 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     private void UpdateActivePreview()
     {
-        if (IsTextContent)
+        if (IsAnimationContent)
         {
+            PreviewBitmap = CreateEmptyBitmap();
+            PreviewAnimation = _animationState.Current;
+
+            if (!IsBusy)
+            {
+                StatusText = PreviewAnimation is null
+                    ? "Load an animated GIF to send."
+                    : "Ready.";
+            }
+        }
+        else if (IsTextContent)
+        {
+            PreviewAnimation = null;
             PreviewBitmap = _textBitmap;
 
             if (!IsBusy)
@@ -353,6 +481,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
         else if (_graphicState.Current is not { } graphicBitmap)
         {
+            PreviewAnimation = null;
             PreviewBitmap = CreateEmptyBitmap();
 
             if (!IsBusy)
@@ -362,6 +491,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
         else
         {
+            PreviewAnimation = null;
             PreviewBitmap = SelectedMode.Value == BadgeDisplayMode.StaticCentered
                 ? MonochromeBitmapViewport.Create(
                     graphicBitmap,
@@ -401,6 +531,7 @@ public enum BadgeContentKind
 {
     Text,
     Graphic,
+    Animation,
 }
 
 public sealed record ContentOption(string Label, BadgeContentKind Value);

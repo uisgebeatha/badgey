@@ -1,6 +1,4 @@
 using System.IO;
-using System.Windows;
-using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
 namespace Badgey.Rendering;
@@ -11,10 +9,7 @@ namespace Badgey.Rendering;
 /// </summary>
 public sealed class WindowsImageRenderer
 {
-    public const byte LuminanceThreshold = 128;
-
-    private const double Dpi = 96;
-    private const int BytesPerPixel = 4;
+    public const byte LuminanceThreshold = BitmapMonochromeConverter.LuminanceThreshold;
 
     private static readonly Guid PngContainerFormat =
         new PngBitmapEncoder().CodecInfo.ContainerFormat;
@@ -60,10 +55,15 @@ public sealed class WindowsImageRenderer
         }
 
         var frame = decoder.Frames[0];
-        var targetWidth = CalculateTargetWidth(frame.PixelWidth, frame.PixelHeight);
-        var raster = ResizeToBadgeHeight(frame, targetWidth);
+        var targetWidth = BitmapMonochromeConverter.CalculateWidthForHeight(
+            frame.PixelWidth,
+            frame.PixelHeight,
+            BadgeBitmapPacker.RequiredHeight);
 
-        return ConvertToMonochrome(raster);
+        return BitmapMonochromeConverter.ResizeToMonochrome(
+            frame,
+            targetWidth,
+            BadgeBitmapPacker.RequiredHeight);
     }
 
     private static bool IsSupported(Guid containerFormat) =>
@@ -71,85 +71,4 @@ public sealed class WindowsImageRenderer
         || containerFormat == JpegContainerFormat
         || containerFormat == BmpContainerFormat;
 
-    private static int CalculateTargetWidth(int sourceWidth, int sourceHeight)
-    {
-        if (sourceWidth <= 0 || sourceHeight <= 0)
-        {
-            throw new ArgumentException("The image must have positive pixel dimensions.");
-        }
-
-        var scaledWidth = checked((long)sourceWidth * BadgeBitmapPacker.RequiredHeight);
-        var roundedWidth = (scaledWidth + (sourceHeight / 2L)) / sourceHeight;
-
-        if (roundedWidth > int.MaxValue)
-        {
-            throw new ArgumentException("The image aspect ratio produces an output that is too wide.");
-        }
-
-        return Math.Max(1, (int)roundedWidth);
-    }
-
-    private static BitmapSource ResizeToBadgeHeight(BitmapSource source, int targetWidth)
-    {
-        if (source.PixelWidth == targetWidth
-            && source.PixelHeight == BadgeBitmapPacker.RequiredHeight)
-        {
-            var converted = new FormatConvertedBitmap(
-                source,
-                PixelFormats.Pbgra32,
-                destinationPalette: null,
-                alphaThreshold: 0);
-            converted.Freeze();
-            return converted;
-        }
-
-        var target = new RenderTargetBitmap(
-            targetWidth,
-            BadgeBitmapPacker.RequiredHeight,
-            Dpi,
-            Dpi,
-            PixelFormats.Pbgra32);
-        var visual = new DrawingVisual();
-
-        RenderOptions.SetBitmapScalingMode(visual, BitmapScalingMode.HighQuality);
-
-        using (var drawingContext = visual.RenderOpen())
-        {
-            drawingContext.DrawImage(
-                source,
-                new Rect(0, 0, targetWidth, BadgeBitmapPacker.RequiredHeight));
-        }
-
-        target.Render(visual);
-        target.Freeze();
-        return target;
-    }
-
-    private static MonochromeBitmap ConvertToMonochrome(BitmapSource source)
-    {
-        var result = new MonochromeBitmap(source.PixelWidth, source.PixelHeight);
-        var stride = checked(source.PixelWidth * BytesPerPixel);
-        var pixels = new byte[checked(stride * source.PixelHeight)];
-        source.CopyPixels(pixels, stride, offset: 0);
-
-        for (var y = 0; y < result.Height; y++)
-        {
-            for (var x = 0; x < result.Width; x++)
-            {
-                var pixelOffset = (y * stride) + (x * BytesPerPixel);
-                var blue = pixels[pixelOffset];
-                var green = pixels[pixelOffset + 1];
-                var red = pixels[pixelOffset + 2];
-                var alpha = pixels[pixelOffset + 3];
-
-                // The Pbgra32 colour channels are already multiplied by alpha,
-                // which treats transparent pixels as black/unlit and gives
-                // partially transparent edges a natural contribution.
-                var luminance = ((54 * red) + (183 * green) + (19 * blue) + 128) >> 8;
-                result[x, y] = alpha != 0 && luminance >= LuminanceThreshold;
-            }
-        }
-
-        return result;
-    }
 }

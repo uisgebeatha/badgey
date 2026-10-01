@@ -10,6 +10,11 @@ public static class BadgeProtocol
     public const int HeaderSize = 64;
     public const int PacketSize = 64;
     public const int MaximumUploadSize = 8192;
+    public const int AnimationFrameStorageWidth = 48;
+    public const int AnimationFrameByteColumns = 6;
+    public const int AnimationFrameDataSize = AnimationFrameByteColumns * DisplayHeight;
+    public const int MaximumAnimationFrameCount =
+        (MaximumUploadSize - HeaderSize) / AnimationFrameDataSize;
 
     private const int SettingsOffset = 8;
     private const int MessageLengthOffset = 16;
@@ -67,6 +72,81 @@ public static class BadgeProtocol
     {
         ValidateInput(bitmapData.Length, mode, speed);
 
+        return CreateUploadCore(bitmapData, mode, speed, timestamp);
+    }
+
+    /// <summary>
+    /// Creates a packet-aligned animation upload from ordered, individually packed frames.
+    /// Each logical 44 x 11 frame must be packed separately into the protocol's six
+    /// byte-columns (48 stored pixels), so frame boundaries remain byte-aligned.
+    /// </summary>
+    public static byte[] CreateAnimationUpload(
+        IReadOnlyList<byte[]> packedFrames,
+        int speed)
+    {
+        return CreateAnimationUpload(packedFrames, speed, DateTime.Now);
+    }
+
+    /// <summary>
+    /// Creates a packet-aligned animation upload using an explicit timestamp.
+    /// This overload is useful when reproducible output is required.
+    /// </summary>
+    public static byte[] CreateAnimationUpload(
+        IReadOnlyList<byte[]> packedFrames,
+        int speed,
+        DateTime timestamp)
+    {
+        ArgumentNullException.ThrowIfNull(packedFrames);
+        ValidateSpeed(speed);
+
+        if (packedFrames.Count == 0)
+        {
+            throw new ArgumentException(
+                "Animation must contain at least one frame.",
+                nameof(packedFrames));
+        }
+
+        if (packedFrames.Count > MaximumAnimationFrameCount)
+        {
+            throw new ArgumentException(
+                $"Animation must not contain more than {MaximumAnimationFrameCount} frames " +
+                $"within the {MaximumUploadSize}-byte upload limit.",
+                nameof(packedFrames));
+        }
+
+        var bitmapData = new byte[packedFrames.Count * AnimationFrameDataSize];
+
+        for (var frameIndex = 0; frameIndex < packedFrames.Count; frameIndex++)
+        {
+            var frame = packedFrames[frameIndex];
+
+            if (frame is null)
+            {
+                throw new ArgumentException(
+                    $"Animation frame {frameIndex} must not be null.",
+                    nameof(packedFrames));
+            }
+
+            if (frame.Length != AnimationFrameDataSize)
+            {
+                throw new ArgumentException(
+                    $"Animation frame {frameIndex} must contain exactly " +
+                    $"{AnimationFrameDataSize} packed bytes ({AnimationFrameByteColumns} byte-columns).",
+                    nameof(packedFrames));
+            }
+
+            frame.CopyTo(bitmapData, frameIndex * AnimationFrameDataSize);
+        }
+
+        return CreateUploadCore(bitmapData, BadgeDisplayMode.Animation, speed, timestamp);
+    }
+
+    private static byte[] CreateUploadCore(
+        ReadOnlySpan<byte> bitmapData,
+        BadgeDisplayMode mode,
+        int speed,
+        DateTime timestamp)
+    {
         var messageLengthInByteColumns = bitmapData.Length / DisplayHeight;
         var unpaddedLength = HeaderSize + bitmapData.Length;
         var uploadLength = RoundUpToPacketSize(unpaddedLength);
@@ -101,10 +181,7 @@ public static class BadgeProtocol
                 "Only scroll-left and static-centred modes are supported.");
         }
 
-        if (speed is < 1 or > 8)
-        {
-            throw new ArgumentOutOfRangeException(nameof(speed), speed, "Speed must be from 1 to 8.");
-        }
+        ValidateSpeed(speed);
 
         if (bitmapLength == 0)
         {
@@ -123,6 +200,14 @@ public static class BadgeProtocol
             throw new ArgumentException(
                 $"The packet-aligned upload must not exceed {MaximumUploadSize} bytes.",
                 "bitmapData");
+        }
+    }
+
+    private static void ValidateSpeed(int speed)
+    {
+        if (speed is < 1 or > 8)
+        {
+            throw new ArgumentOutOfRangeException(nameof(speed), speed, "Speed must be from 1 to 8.");
         }
     }
 

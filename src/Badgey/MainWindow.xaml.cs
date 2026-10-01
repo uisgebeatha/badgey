@@ -12,7 +12,8 @@ public partial class MainWindow : Window
         DataContext = new MainWindowViewModel(
             new BadgeController(
                 new WindowsTextRenderer(),
-                new WindowsImageRenderer()));
+                new WindowsImageRenderer(),
+                new WindowsGifAnimationRenderer()));
     }
 
     private void LoadImageButton_Click(object sender, RoutedEventArgs e)
@@ -33,6 +34,23 @@ public partial class MainWindow : Window
             && DataContext is MainWindowViewModel viewModel)
         {
             viewModel.LoadGraphic(dialog.FileName);
+        }
+    }
+
+    private void LoadGifButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "Load badge animation",
+            Filter = "GIF animations (*.gif)|*.gif",
+            CheckFileExists = true,
+            Multiselect = false,
+        };
+
+        if (dialog.ShowDialog(this) == true
+            && DataContext is MainWindowViewModel viewModel)
+        {
+            viewModel.LoadAnimation(dialog.FileName);
         }
     }
 }

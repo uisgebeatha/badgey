@@ -43,12 +43,23 @@ public sealed class LedMatrixPreview : FrameworkElement
         typeof(LedMatrixPreview),
         new FrameworkPropertyMetadata(false, OnAnimationInputChanged));
 
+    public static readonly DependencyProperty FrameAnimationProperty = DependencyProperty.Register(
+        nameof(FrameAnimation),
+        typeof(MonochromeAnimation),
+        typeof(LedMatrixPreview),
+        new FrameworkPropertyMetadata(
+            null,
+            FrameworkPropertyMetadataOptions.AffectsRender,
+            OnAnimationInputChanged));
+
     private static readonly Brush BackgroundBrush = CreateBrush(0x10, 0x18, 0x12);
     private static readonly Brush UnlitBrush = CreateBrush(0x20, 0x30, 0x23);
     private static readonly Brush LitBrush = CreateBrush(0x69, 0xF0, 0x73);
 
     private readonly DispatcherTimer _scrollTimer;
+    private readonly DispatcherTimer _frameTimer;
     private int _scrollOffset;
+    private int _frameIndex;
 
     public LedMatrixPreview()
     {
@@ -57,6 +68,11 @@ public sealed class LedMatrixPreview : FrameworkElement
             Interval = GetScrollInterval(speed: 4),
         };
         _scrollTimer.Tick += OnScrollTick;
+        _frameTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = PreviewAnimationTiming.GetInterval(speed: 4),
+        };
+        _frameTimer.Tick += OnFrameTick;
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
     }
@@ -91,6 +107,12 @@ public sealed class LedMatrixPreview : FrameworkElement
         set => SetValue(ScrollRepeatGapIsLitProperty, value);
     }
 
+    public MonochromeAnimation? FrameAnimation
+    {
+        get => (MonochromeAnimation?)GetValue(FrameAnimationProperty);
+        set => SetValue(FrameAnimationProperty, value);
+    }
+
     protected override void OnRender(DrawingContext drawingContext)
     {
         base.OnRender(drawingContext);
@@ -117,18 +139,24 @@ public sealed class LedMatrixPreview : FrameworkElement
         var offsetY = (ActualHeight - matrixHeight) / 2;
         var inset = Math.Max(0.7, cellSize * 0.12);
         var pixelRadius = Math.Max(0.5, cellSize * 0.12);
+        var frameBitmap = FrameAnimation is { FrameCount: > 0 } animation
+            ? animation[_frameIndex % animation.FrameCount]
+            : null;
+        var activeBitmap = frameBitmap ?? Bitmap;
 
         for (var y = 0; y < BadgeProtocol.DisplayHeight; y++)
         {
             for (var x = 0; x < BadgeProtocol.DisplayWidth; x++)
             {
-                var sourceX = GetSourceColumn(x);
+                var sourceX = frameBitmap is null
+                    ? GetSourceColumn(x)
+                    : x;
                 var isLit = sourceX < 0
-                    ? IsScrolling && ScrollRepeatGapIsLit
-                    : Bitmap is not null
-                        && sourceX < Bitmap.Width
-                        && y < Bitmap.Height
-                        && Bitmap[sourceX, y];
+                    ? frameBitmap is null && IsScrolling && ScrollRepeatGapIsLit
+                    : activeBitmap is not null
+                        && sourceX < activeBitmap.Width
+                        && y < activeBitmap.Height
+                        && activeBitmap[sourceX, y];
                 var pixelRect = new Rect(
                     offsetX + (x * cellSize) + inset,
                     offsetY + (y * cellSize) + inset,
@@ -161,14 +189,36 @@ public sealed class LedMatrixPreview : FrameworkElement
     private void RestartAnimation()
     {
         _scrollTimer.Stop();
+        _frameTimer.Stop();
         _scrollOffset = 0;
+        _frameIndex = 0;
         _scrollTimer.Interval = GetScrollInterval(Speed);
+        _frameTimer.Interval = PreviewAnimationTiming.GetInterval(Speed);
 
-        if (IsLoaded && IsScrolling && Bitmap is { Width: > 0 })
+        if (IsLoaded && FrameAnimation is { FrameCount: > 0 } animation)
+        {
+            if (animation.FrameCount > 1)
+            {
+                _frameTimer.Start();
+            }
+        }
+        else if (IsLoaded && IsScrolling && Bitmap is { Width: > 0 })
         {
             _scrollTimer.Start();
         }
 
+        InvalidateVisual();
+    }
+
+    private void OnFrameTick(object? sender, EventArgs e)
+    {
+        if (FrameAnimation is not { FrameCount: > 0 } animation)
+        {
+            RestartAnimation();
+            return;
+        }
+
+        _frameIndex = (_frameIndex + 1) % animation.FrameCount;
         InvalidateVisual();
     }
 
@@ -189,7 +239,11 @@ public sealed class LedMatrixPreview : FrameworkElement
 
     private void OnLoaded(object sender, RoutedEventArgs e) => RestartAnimation();
 
-    private void OnUnloaded(object sender, RoutedEventArgs e) => _scrollTimer.Stop();
+    private void OnUnloaded(object sender, RoutedEventArgs e)
+    {
+        _scrollTimer.Stop();
+        _frameTimer.Stop();
+    }
 
     private static void OnAnimationInputChanged(
         DependencyObject dependencyObject,

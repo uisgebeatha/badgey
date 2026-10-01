@@ -7,4 +7,5 @@ public enum BadgeDisplayMode : byte
 {
     ScrollLeft = 0,
     StaticCentered = 4,
+    Animation = 5,
 }

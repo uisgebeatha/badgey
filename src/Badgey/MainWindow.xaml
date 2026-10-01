@@ -96,42 +96,82 @@
                               IsChecked="{Binding IsGraphicInverted}" />
                 </Grid>
             </StackPanel>
+
+            <StackPanel Visibility="{Binding IsAnimationContent, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <TextBlock Margin="0,0,0,6"
+                           FontWeight="SemiBold"
+                           Text="Animation" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <Button Grid.Column="0"
+                            MinHeight="36"
+                            Padding="14,6"
+                            Click="LoadGifButton_Click"
+                            Content="Load GIF"
+                            IsEnabled="{Binding CanLoadAnimation}" />
+                    <TextBlock Grid.Column="1"
+                               Margin="12,0,0,0"
+                               VerticalAlignment="Center"
+                               Foreground="#61656B"
+                               Text="{Binding SelectedAnimationFileName}"
+                               TextTrimming="CharacterEllipsis" />
+                    <TextBlock Grid.Column="2"
+                               Margin="16,0,0,0"
+                               VerticalAlignment="Center"
+                               Foreground="#61656B"
+                               Text="{Binding AnimationFrameCountText}" />
+                    <CheckBox Grid.Column="3"
+                              Margin="16,0,0,0"
+                              VerticalAlignment="Center"
+                              Content="Invert"
+                              IsEnabled="{Binding CanInvertAnimation}"
+                              IsChecked="{Binding IsAnimationInverted}" />
+                </Grid>
+            </StackPanel>
         </Grid>
 
         <Grid Grid.Row="3" Margin="0,16,0,18">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="150" />
-                <ColumnDefinition Width="24" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="72" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
-            <TextBlock Grid.Column="0"
-                       Margin="0,0,8,0"
-                       VerticalAlignment="Center"
-                       Text="Mode" />
-            <ComboBox Grid.Column="1"
-                      MinHeight="32"
-                      Padding="7,4"
-                      DisplayMemberPath="Label"
-                      ItemsSource="{Binding Modes}"
-                      SelectedItem="{Binding SelectedMode}" />
+            <StackPanel Grid.Column="0"
+                        Margin="0,0,24,0"
+                        Orientation="Horizontal"
+                        Visibility="{Binding IsTextOrGraphicContent, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <TextBlock Margin="0,0,8,0"
+                           VerticalAlignment="Center"
+                           Text="Mode" />
+                <ComboBox Width="150"
+                          MinHeight="32"
+                          Padding="7,4"
+                          DisplayMemberPath="Label"
+                          ItemsSource="{Binding Modes}"
+                          SelectedItem="{Binding SelectedMode}" />
+            </StackPanel>
 
-            <TextBlock Grid.Column="3"
+            <TextBlock Grid.Column="1"
                        Margin="0,0,8,0"
                        VerticalAlignment="Center"
                        Text="Speed" />
-            <ComboBox Grid.Column="4"
+            <ComboBox Grid.Column="2"
                       MinHeight="32"
                       Padding="7,4"
                       HorizontalContentAlignment="Center"
                       ItemsSource="{Binding Speeds}"
                       SelectedItem="{Binding Speed}" />
 
-            <Button Grid.Column="6"
+            <Button Grid.Column="4"
                     MinWidth="110"
                     MinHeight="34"
                     Padding="16,6"
@@ -163,6 +203,7 @@
                     BorderThickness="1"
                     CornerRadius="8">
                 <local:LedMatrixPreview Bitmap="{Binding PreviewBitmap}"
+                                        FrameAnimation="{Binding PreviewAnimation}"
                                         IsScrolling="{Binding IsPreviewScrolling}"
                                         ScrollRepeatGap="{Binding PreviewRepeatGap}"
                                         ScrollRepeatGapIsLit="{Binding PreviewRepeatGapIsLit}"
