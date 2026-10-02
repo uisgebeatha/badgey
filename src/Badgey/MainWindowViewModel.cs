@@ -19,6 +19,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private PreparedBadgeUpload? _preparedUpload;
     private MonochromeBitmap _previewBitmap = CreateEmptyBitmap();
     private MonochromeAnimation? _previewAnimation;
+    private EditableMonochromeBitmap? _activePixelEditor;
+    private PixelPaintTool _pixelEditorTool = PixelPaintTool.Draw;
     private string _uploadSummaryText = "0 of 8 slots • Nothing to send";
     private string _statusText = "Ready.";
     private bool _isBusy;
@@ -66,6 +68,12 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         get => _selectedSlot;
         set
         {
+            if (IsGraphicEditing && !ReferenceEquals(value, _selectedSlot))
+            {
+                StatusText = "Apply or cancel the graphic edit before changing slots.";
+                return;
+            }
+
             if (value is null
                 || !Slots.Contains(value)
                 || !SetField(ref _selectedSlot, value))
@@ -83,7 +91,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         get => ContentTypes.First(option => option.Value == SelectedSlot.ContentKind);
         set
         {
-            if (value is null || SelectedSlot.ContentKind == value.Value)
+            if (IsGraphicEditing
+                || value is null
+                || SelectedSlot.ContentKind == value.Value)
             {
                 return;
             }
@@ -104,12 +114,68 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     public bool IsTextOrGraphicContent => !IsAnimationContent;
 
+    public EditableMonochromeBitmap? ActivePixelEditor
+    {
+        get => _activePixelEditor;
+        private set
+        {
+            if (!SetField(ref _activePixelEditor, value))
+            {
+                return;
+            }
+
+            RaisePixelEditingPropertiesChanged();
+        }
+    }
+
+    public bool IsGraphicEditing => ActivePixelEditor is not null;
+
+    public bool IsNotGraphicEditing => !IsGraphicEditing;
+
+    public PixelPaintTool PixelEditorTool
+    {
+        get => _pixelEditorTool;
+        set
+        {
+            if (SetField(ref _pixelEditorTool, value))
+            {
+                OnPropertyChanged(nameof(IsDrawToolSelected));
+                OnPropertyChanged(nameof(IsEraseToolSelected));
+            }
+        }
+    }
+
+    public bool IsDrawToolSelected
+    {
+        get => PixelEditorTool == PixelPaintTool.Draw;
+        set
+        {
+            if (value)
+            {
+                PixelEditorTool = PixelPaintTool.Draw;
+            }
+        }
+    }
+
+    public bool IsEraseToolSelected
+    {
+        get => PixelEditorTool == PixelPaintTool.Erase;
+        set
+        {
+            if (value)
+            {
+                PixelEditorTool = PixelPaintTool.Erase;
+            }
+        }
+    }
+
     public bool IsGraphicInverted
     {
         get => SelectedSlot.GraphicState.IsInverted;
         set
         {
-            if (SelectedSlot.GraphicState.Source is null
+            if (IsGraphicEditing
+                || SelectedSlot.GraphicState.Source is null
                 || SelectedSlot.GraphicState.IsInverted == value)
             {
                 return;
@@ -190,7 +256,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         get => Modes.First(option => option.Value == SelectedSlot.Mode);
         set
         {
-            if (value is null || SelectedSlot.Mode == value.Value)
+            if (IsGraphicEditing
+                || value is null
+                || SelectedSlot.Mode == value.Value)
             {
                 return;
             }
@@ -217,7 +285,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         get => SelectedSlot.Speed;
         set
         {
-            if (SelectedSlot.Speed == value)
+            if (IsGraphicEditing || SelectedSlot.Speed == value)
             {
                 return;
             }
@@ -275,31 +343,46 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
             OnPropertyChanged(nameof(CanLoadGraphic));
             OnPropertyChanged(nameof(CanInvertGraphic));
+            OnPropertyChanged(nameof(CanEditGraphic));
             OnPropertyChanged(nameof(CanLoadAnimation));
             OnPropertyChanged(nameof(CanInvertAnimation));
             OnPropertyChanged(nameof(CanClearSlot));
             OnPropertyChanged(nameof(IsSlotSelectionEnabled));
+            OnPropertyChanged(nameof(IsContentSelectionEnabled));
             SendCommand.RaiseCanExecuteChanged();
         }
     }
 
-    public bool IsSlotSelectionEnabled => !IsBusy;
+    public bool IsSlotSelectionEnabled => !IsBusy && !IsGraphicEditing;
 
-    public bool CanLoadGraphic => !IsBusy;
+    public bool IsContentSelectionEnabled => !IsBusy && !IsGraphicEditing;
+
+    public bool CanLoadGraphic => !IsBusy && !IsGraphicEditing;
 
     public bool CanInvertGraphic =>
-        !IsBusy && SelectedSlot.GraphicState.Source is not null;
+        !IsBusy
+        && !IsGraphicEditing
+        && SelectedSlot.GraphicState.Source is not null;
 
-    public bool CanLoadAnimation => !IsBusy;
+    public bool CanEditGraphic =>
+        !IsBusy
+        && !IsGraphicEditing
+        && IsGraphicContent
+        && SelectedSlot.GraphicState.Current is not null;
+
+    public bool CanLoadAnimation => !IsBusy && !IsGraphicEditing;
 
     public bool CanInvertAnimation =>
-        !IsBusy && SelectedSlot.AnimationState.Source is not null;
+        !IsBusy
+        && !IsGraphicEditing
+        && SelectedSlot.AnimationState.Source is not null;
 
-    public bool CanClearSlot => !IsBusy && SelectedSlotHasStoredState();
+    public bool CanClearSlot =>
+        !IsBusy && !IsGraphicEditing && SelectedSlotHasStoredState();
 
     public void LoadGraphic(string path)
     {
-        if (IsBusy)
+        if (IsBusy || IsGraphicEditing)
         {
             return;
         }
@@ -311,6 +394,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(IsGraphicInverted));
             OnPropertyChanged(nameof(SelectedFileName));
             OnPropertyChanged(nameof(CanInvertGraphic));
+            OnPropertyChanged(nameof(CanEditGraphic));
             OnPropertyChanged(nameof(CanClearSlot));
 
             if (IsGraphicContent)
@@ -331,7 +415,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     public void LoadAnimation(string path)
     {
-        if (IsBusy)
+        if (IsBusy || IsGraphicEditing)
         {
             return;
         }
@@ -364,7 +448,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     public void ClearSelectedSlot()
     {
-        if (IsBusy)
+        if (IsBusy || IsGraphicEditing)
         {
             return;
         }
@@ -375,8 +459,63 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         RefreshPreparedUpload();
     }
 
+    public void BeginGraphicEdit()
+    {
+        if (!CanEditGraphic || SelectedSlot.GraphicState.Current is not { } bitmap)
+        {
+            return;
+        }
+
+        ActivePixelEditor = EditableMonochromeBitmap.FromGraphicViewport(bitmap);
+        PixelEditorTool = PixelPaintTool.Draw;
+        StatusText = SelectedSlot.GraphicState.IsInverted
+            ? "Editing the displayed inverted graphic. Apply adopts these pixels with Invert off."
+            : "Editing a 44 x 11 copy. Apply to replace the graphic, or Cancel to discard it.";
+    }
+
+    public void ClearPixelEditor() => ActivePixelEditor?.ClearAll();
+
+    public void FillPixelEditor() => ActivePixelEditor?.FillAll();
+
+    public void InvertPixelEditor() => ActivePixelEditor?.Invert();
+
+    public void ApplyGraphicEdit()
+    {
+        if (ActivePixelEditor is not { } editor)
+        {
+            return;
+        }
+
+        var editedBitmap = editor.CreateBitmap();
+        SelectedSlot.LoadGraphic(
+            editedBitmap,
+            BadgeSlotState.EditedGraphicFileName);
+        ActivePixelEditor = null;
+        OnPropertyChanged(nameof(IsGraphicInverted));
+        OnPropertyChanged(nameof(SelectedFileName));
+        OnPropertyChanged(nameof(CanInvertGraphic));
+        OnPropertyChanged(nameof(CanEditGraphic));
+        OnPropertyChanged(nameof(CanClearSlot));
+        OnPropertyChanged(nameof(PreviewRepeatGapIsLit));
+        UpdateActivePreview();
+        RefreshPreparedUpload();
+    }
+
+    public void CancelGraphicEdit()
+    {
+        if (!IsGraphicEditing)
+        {
+            return;
+        }
+
+        ActivePixelEditor = null;
+        UpdateActivePreview();
+    }
+
     private bool CanSend() =>
-        !IsBusy && _preparedUpload is { PopulatedSlotCount: > 0 };
+        !IsBusy
+        && !IsGraphicEditing
+        && _preparedUpload is { PopulatedSlotCount: > 0 };
 
     private async Task SendAsync()
     {
@@ -582,6 +721,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(SelectedAnimationFileName));
         OnPropertyChanged(nameof(AnimationFrameCountText));
         OnPropertyChanged(nameof(CanInvertGraphic));
+        OnPropertyChanged(nameof(CanEditGraphic));
         OnPropertyChanged(nameof(CanInvertAnimation));
         OnPropertyChanged(nameof(CanClearSlot));
     }
@@ -595,6 +735,22 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(IsPreviewScrolling));
         OnPropertyChanged(nameof(PreviewRepeatGap));
         OnPropertyChanged(nameof(PreviewRepeatGapIsLit));
+        OnPropertyChanged(nameof(CanEditGraphic));
+    }
+
+    private void RaisePixelEditingPropertiesChanged()
+    {
+        OnPropertyChanged(nameof(IsGraphicEditing));
+        OnPropertyChanged(nameof(IsNotGraphicEditing));
+        OnPropertyChanged(nameof(IsSlotSelectionEnabled));
+        OnPropertyChanged(nameof(IsContentSelectionEnabled));
+        OnPropertyChanged(nameof(CanLoadGraphic));
+        OnPropertyChanged(nameof(CanInvertGraphic));
+        OnPropertyChanged(nameof(CanEditGraphic));
+        OnPropertyChanged(nameof(CanLoadAnimation));
+        OnPropertyChanged(nameof(CanInvertAnimation));
+        OnPropertyChanged(nameof(CanClearSlot));
+        SendCommand.RaiseCanExecuteChanged();
     }
 
     private static MonochromeBitmap CreateEmptyBitmap() =>

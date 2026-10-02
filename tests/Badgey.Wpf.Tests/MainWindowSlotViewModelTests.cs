@@ -154,6 +154,110 @@ public class MainWindowSlotViewModelTests
         Assert.Equal("0 of 8 slots • Nothing to send", viewModel.UploadSummaryText);
     }
 
+    [Fact]
+    public void GraphicEdit_CancelLeavesSourceInversionAndCurrentBitmapUnchanged()
+    {
+        var viewModel = CreateViewModel();
+        var graphic = viewModel.ContentTypes.Single(
+            option => option.Value == BadgeContentKind.Graphic);
+        var source = new MonochromeBitmap(width: 4, height: 11)
+        {
+            [0, 0] = true,
+        };
+
+        viewModel.SelectedSlot.LoadGraphic(source, "source.png");
+        viewModel.SelectedContent = graphic;
+        viewModel.IsGraphicInverted = true;
+        var currentBeforeEdit = viewModel.SelectedSlot.GraphicState.Current;
+
+        viewModel.BeginGraphicEdit();
+        viewModel.ActivePixelEditor!.ClearAll();
+        viewModel.CancelGraphicEdit();
+
+        Assert.False(viewModel.IsGraphicEditing);
+        Assert.Same(source, viewModel.SelectedSlot.GraphicState.Source);
+        Assert.Same(currentBeforeEdit, viewModel.SelectedSlot.GraphicState.Current);
+        Assert.True(viewModel.IsGraphicInverted);
+        Assert.Equal("source.png", viewModel.SelectedFileName);
+    }
+
+    [Fact]
+    public void GraphicEdit_ApplyAdoptsExactDisplayedPixelsAndResetsInvert()
+    {
+        var viewModel = CreateViewModel();
+        var graphic = viewModel.ContentTypes.Single(
+            option => option.Value == BadgeContentKind.Graphic);
+        var source = new MonochromeBitmap(width: 4, height: 11)
+        {
+            [0, 0] = true,
+        };
+
+        viewModel.SelectedSlot.LoadGraphic(source, "source.png");
+        viewModel.SelectedContent = graphic;
+        viewModel.IsGraphicInverted = true;
+        viewModel.BeginGraphicEdit();
+        viewModel.ActivePixelEditor!.ClearAll();
+        viewModel.ActivePixelEditor.SetPixel(3, 4);
+
+        viewModel.ApplyGraphicEdit();
+
+        var applied = viewModel.SelectedSlot.GraphicState.Source!;
+        Assert.False(viewModel.IsGraphicEditing);
+        Assert.False(viewModel.IsGraphicInverted);
+        Assert.Equal(44, applied.Width);
+        Assert.Equal(11, applied.Height);
+        Assert.True(applied[3, 4]);
+        Assert.Equal(1, CountLitPixels(applied));
+        Assert.Same(applied, viewModel.SelectedSlot.GraphicState.Current);
+        Assert.Same(applied, viewModel.PreviewBitmap);
+        Assert.Equal(BadgeSlotState.EditedGraphicFileName, viewModel.SelectedFileName);
+        Assert.True(viewModel.SendCommand.CanExecute(parameter: null));
+    }
+
+    [Fact]
+    public void GraphicEdit_PreventsSlotSwitchAndSendingUntilResolved()
+    {
+        var viewModel = CreateViewModel();
+        var graphic = viewModel.ContentTypes.Single(
+            option => option.Value == BadgeContentKind.Graphic);
+        viewModel.SelectedSlot.LoadGraphic(
+            new MonochromeBitmap(width: 44, height: 11),
+            "source.png");
+        viewModel.SelectedContent = graphic;
+
+        viewModel.BeginGraphicEdit();
+        viewModel.SelectedSlot = viewModel.Slots[1];
+
+        Assert.Same(viewModel.Slots[0], viewModel.SelectedSlot);
+        Assert.False(viewModel.IsSlotSelectionEnabled);
+        Assert.False(viewModel.IsContentSelectionEnabled);
+        Assert.False(viewModel.SendCommand.CanExecute(parameter: null));
+        Assert.Contains("Apply or cancel", viewModel.StatusText);
+
+        viewModel.CancelGraphicEdit();
+
+        Assert.True(viewModel.IsSlotSelectionEnabled);
+        Assert.True(viewModel.SendCommand.CanExecute(parameter: null));
+    }
+
+    private static int CountLitPixels(MonochromeBitmap bitmap)
+    {
+        var count = 0;
+
+        for (var y = 0; y < bitmap.Height; y++)
+        {
+            for (var x = 0; x < bitmap.Width; x++)
+            {
+                if (bitmap[x, y])
+                {
+                    count++;
+                }
+            }
+        }
+
+        return count;
+    }
+
     private static MainWindowViewModel CreateViewModel() =>
         new(
             new BadgeController(

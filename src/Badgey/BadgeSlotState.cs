@@ -13,6 +13,7 @@ namespace Badgey;
 public sealed class BadgeSlotState : INotifyPropertyChanged
 {
     public const string NoGraphicFileName = "No image selected";
+    public const string EditedGraphicFileName = "Edited 44 x 11 graphic";
     public const string NoAnimationFileName = "No GIF selected";
 
     private BadgeContentKind _contentKind = BadgeContentKind.Text;

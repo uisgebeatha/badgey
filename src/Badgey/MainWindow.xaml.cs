@@ -61,4 +61,52 @@ public partial class MainWindow : Window
             viewModel.ClearSelectedSlot();
         }
     }
+
+    private void EditGraphicButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel viewModel)
+        {
+            viewModel.BeginGraphicEdit();
+        }
+    }
+
+    private void ClearEditorButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel viewModel)
+        {
+            viewModel.ClearPixelEditor();
+        }
+    }
+
+    private void FillEditorButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel viewModel)
+        {
+            viewModel.FillPixelEditor();
+        }
+    }
+
+    private void InvertEditorButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel viewModel)
+        {
+            viewModel.InvertPixelEditor();
+        }
+    }
+
+    private void ApplyEditorButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel viewModel)
+        {
+            viewModel.ApplyGraphicEdit();
+        }
+    }
+
+    private void CancelEditorButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel viewModel)
+        {
+            viewModel.CancelGraphicEdit();
+        }
+    }
 }

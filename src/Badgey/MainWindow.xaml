@@ -117,6 +117,7 @@
                       MinHeight="32"
                       Padding="7,4"
                       DisplayMemberPath="Label"
+                      IsEnabled="{Binding IsContentSelectionEnabled}"
                       ItemsSource="{Binding ContentTypes}"
                       SelectedItem="{Binding SelectedContent}" />
         </Grid>
@@ -142,6 +143,7 @@
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
 
                     <Button Grid.Column="0"
@@ -156,7 +158,14 @@
                                Foreground="#61656B"
                                Text="{Binding SelectedFileName}"
                                TextTrimming="CharacterEllipsis" />
-                    <CheckBox Grid.Column="2"
+                    <Button Grid.Column="2"
+                            MinHeight="32"
+                            Margin="12,0,0,0"
+                            Padding="12,4"
+                            Click="EditGraphicButton_Click"
+                            Content="Edit"
+                            IsEnabled="{Binding CanEditGraphic}" />
+                    <CheckBox Grid.Column="3"
                               Margin="16,0,0,0"
                               VerticalAlignment="Center"
                               Content="Invert"
@@ -204,7 +213,9 @@
             </StackPanel>
         </Grid>
 
-        <Grid Grid.Row="4" Margin="0,16,0,18">
+        <Grid Grid.Row="4"
+              Margin="0,16,0,18"
+              Visibility="{Binding IsNotGraphicEditing, Converter={StaticResource BooleanToVisibilityConverter}}">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
@@ -249,34 +260,112 @@
         </Grid>
 
         <Grid Grid.Row="5">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
-            </Grid.RowDefinitions>
+            <Grid Visibility="{Binding IsNotGraphicEditing, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
 
-            <DockPanel Grid.Row="0" Margin="0,0,0,7">
-                <TextBlock DockPanel.Dock="Left"
-                           FontWeight="SemiBold"
-                           Text="Preview" />
-                <TextBlock HorizontalAlignment="Right"
-                           Foreground="#73777D"
-                           Text="44 × 11 display preview" />
-            </DockPanel>
+                <DockPanel Grid.Row="0" Margin="0,0,0,7">
+                    <TextBlock DockPanel.Dock="Left"
+                               FontWeight="SemiBold"
+                               Text="Preview" />
+                    <TextBlock HorizontalAlignment="Right"
+                               Foreground="#73777D"
+                               Text="44 × 11 display preview" />
+                </DockPanel>
 
-            <Border Grid.Row="1"
-                    MinHeight="118"
-                    Padding="10"
-                    Background="#E5E8E6"
-                    BorderBrush="#CED3CF"
-                    BorderThickness="1"
-                    CornerRadius="8">
-                <local:LedMatrixPreview Bitmap="{Binding PreviewBitmap}"
-                                        FrameAnimation="{Binding PreviewAnimation}"
-                                        IsScrolling="{Binding IsPreviewScrolling}"
-                                        ScrollRepeatGap="{Binding PreviewRepeatGap}"
-                                        ScrollRepeatGapIsLit="{Binding PreviewRepeatGapIsLit}"
-                                        Speed="{Binding Speed}" />
-            </Border>
+                <Border Grid.Row="1"
+                        MinHeight="118"
+                        Padding="10"
+                        Background="#E5E8E6"
+                        BorderBrush="#CED3CF"
+                        BorderThickness="1"
+                        CornerRadius="8">
+                    <local:LedMatrixPreview Bitmap="{Binding PreviewBitmap}"
+                                            FrameAnimation="{Binding PreviewAnimation}"
+                                            IsScrolling="{Binding IsPreviewScrolling}"
+                                            ScrollRepeatGap="{Binding PreviewRepeatGap}"
+                                            ScrollRepeatGapIsLit="{Binding PreviewRepeatGapIsLit}"
+                                            Speed="{Binding Speed}" />
+                </Border>
+            </Grid>
+
+            <Grid Visibility="{Binding IsGraphicEditing, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <DockPanel Grid.Row="0" Margin="0,0,0,7">
+                    <TextBlock DockPanel.Dock="Left"
+                               FontWeight="SemiBold"
+                               Text="Pixel Editor" />
+                    <TextBlock HorizontalAlignment="Right"
+                               Foreground="#73777D"
+                               Text="44 × 11 working copy" />
+                </DockPanel>
+
+                <Border Grid.Row="1"
+                        MinHeight="132"
+                        Background="#121613"
+                        BorderBrush="#89918C"
+                        BorderThickness="1">
+                    <local:PixelEditorControl Editor="{Binding ActivePixelEditor}"
+                                              Tool="{Binding PixelEditorTool}" />
+                </Border>
+
+                <Grid Grid.Row="2" Margin="0,9,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="16" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <RadioButton Grid.Column="0"
+                                 Margin="0,0,12,0"
+                                 VerticalAlignment="Center"
+                                 Content="Pencil"
+                                 GroupName="PixelEditorTool"
+                                 IsChecked="{Binding IsDrawToolSelected}" />
+                    <RadioButton Grid.Column="1"
+                                 VerticalAlignment="Center"
+                                 Content="Erase"
+                                 GroupName="PixelEditorTool"
+                                 IsChecked="{Binding IsEraseToolSelected}" />
+                    <Button Grid.Column="3"
+                            Padding="10,4"
+                            Click="ClearEditorButton_Click"
+                            Content="Clear" />
+                    <Button Grid.Column="4"
+                            Margin="6,0,0,0"
+                            Padding="10,4"
+                            Click="FillEditorButton_Click"
+                            Content="Fill" />
+                    <Button Grid.Column="5"
+                            Margin="6,0,0,0"
+                            Padding="10,4"
+                            Click="InvertEditorButton_Click"
+                            Content="Invert" />
+                    <Button Grid.Column="7"
+                            Padding="13,4"
+                            Click="CancelEditorButton_Click"
+                            Content="Cancel" />
+                    <Button Grid.Column="8"
+                            Margin="6,0,0,0"
+                            Padding="13,4"
+                            Click="ApplyEditorButton_Click"
+                            Content="Apply"
+                            IsDefault="True" />
+                </Grid>
+            </Grid>
         </Grid>
 
         <Grid Grid.Row="6" Margin="0,16,0,0">
