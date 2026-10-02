@@ -9,30 +9,19 @@ namespace Badgey;
 
 public sealed class MainWindowViewModel : INotifyPropertyChanged
 {
-    private const int GraphicRepeatGapColumns = 4;
+    private const int SlotCount = BadgeProtocol.MaximumSlotCount;
+    private const int GraphicRepeatGapColumns =
+        BadgeMultiSlotUploadComposer.GraphicRepeatGapColumns;
     private const int TextRepeatGapColumns = BadgeProtocol.DisplayWidth;
 
-    // Largest logical width whose packed bitmap still fits one protocol upload.
-    private const int MaximumUploadBitmapWidth =
-        ((BadgeProtocol.MaximumUploadSize - BadgeProtocol.HeaderSize)
-            / BadgeBitmapPacker.RequiredHeight)
-        * BadgeBitmapPacker.PixelsPerByte;
-
     private readonly BadgeController _controller;
-    private readonly GraphicBitmapState _graphicState = new();
-    private readonly AnimationBitmapState _animationState = new();
-    private string _message = "Hello Badgey";
-    private ContentOption _selectedContent;
-    private ModeOption _selectedMode;
-    private int _speed = 4;
-    private MonochromeBitmap _textBitmap = CreateEmptyBitmap();
+    private BadgeSlotState _selectedSlot;
+    private PreparedBadgeUpload? _preparedUpload;
     private MonochromeBitmap _previewBitmap = CreateEmptyBitmap();
     private MonochromeAnimation? _previewAnimation;
-    private string _selectedFileName = "No image selected";
-    private string _selectedAnimationFileName = "No GIF selected";
+    private string _uploadSummaryText = "0 of 8 slots • Nothing to send";
     private string _statusText = "Ready.";
     private bool _isBusy;
-    private bool _textPreviewIsValid;
 
     public MainWindowViewModel(BadgeController controller)
     {
@@ -49,13 +38,20 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             new ModeOption("Static Centered", BadgeDisplayMode.StaticCentered),
         ];
         Speeds = Enumerable.Range(1, 8).ToArray();
-        _selectedContent = ContentTypes[0];
-        _selectedMode = Modes[0];
+        Slots = Enumerable.Range(1, SlotCount)
+            .Select(slotNumber => new BadgeSlotState(slotNumber))
+            .ToArray();
+        _selectedSlot = Slots[0];
         SendCommand = new AsyncRelayCommand(SendAsync, CanSend);
-        UpdateTextBitmap();
+
+        RenderTextIntoSlot(_selectedSlot, "Hello Badgey");
+        UpdateActivePreview();
+        RefreshPreparedUpload();
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
+
+    public IReadOnlyList<BadgeSlotState> Slots { get; }
 
     public IReadOnlyList<ContentOption> ContentTypes { get; }
 
@@ -65,53 +61,71 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     public AsyncRelayCommand SendCommand { get; }
 
-    public ContentOption SelectedContent
+    public BadgeSlotState SelectedSlot
     {
-        get => _selectedContent;
+        get => _selectedSlot;
         set
         {
-            if (value is null || !SetField(ref _selectedContent, value))
+            if (value is null
+                || !Slots.Contains(value)
+                || !SetField(ref _selectedSlot, value))
             {
                 return;
             }
 
-            OnPropertyChanged(nameof(IsTextContent));
-            OnPropertyChanged(nameof(IsGraphicContent));
-            OnPropertyChanged(nameof(IsAnimationContent));
-            OnPropertyChanged(nameof(IsTextOrGraphicContent));
-            OnPropertyChanged(nameof(IsPreviewScrolling));
-            OnPropertyChanged(nameof(PreviewRepeatGap));
-            OnPropertyChanged(nameof(PreviewRepeatGapIsLit));
+            RaiseSelectedSlotPropertiesChanged();
             UpdateActivePreview();
         }
     }
 
-    public bool IsTextContent => SelectedContent.Value == BadgeContentKind.Text;
+    public ContentOption SelectedContent
+    {
+        get => ContentTypes.First(option => option.Value == SelectedSlot.ContentKind);
+        set
+        {
+            if (value is null || SelectedSlot.ContentKind == value.Value)
+            {
+                return;
+            }
 
-    public bool IsGraphicContent => SelectedContent.Value == BadgeContentKind.Graphic;
+            SelectedSlot.ContentKind = value.Value;
+            RaiseContentPropertiesChanged();
+            OnPropertyChanged(nameof(CanClearSlot));
+            UpdateActivePreview();
+            RefreshPreparedUpload();
+        }
+    }
 
-    public bool IsAnimationContent => SelectedContent.Value == BadgeContentKind.Animation;
+    public bool IsTextContent => SelectedSlot.ContentKind == BadgeContentKind.Text;
+
+    public bool IsGraphicContent => SelectedSlot.ContentKind == BadgeContentKind.Graphic;
+
+    public bool IsAnimationContent => SelectedSlot.ContentKind == BadgeContentKind.Animation;
 
     public bool IsTextOrGraphicContent => !IsAnimationContent;
 
     public bool IsGraphicInverted
     {
-        get => _graphicState.IsInverted;
+        get => SelectedSlot.GraphicState.IsInverted;
         set
         {
-            if (_graphicState.Source is null || _graphicState.IsInverted == value)
+            if (SelectedSlot.GraphicState.Source is null
+                || SelectedSlot.GraphicState.IsInverted == value)
             {
                 return;
             }
 
-            _graphicState.SetInverted(value);
+            SelectedSlot.SetGraphicInverted(value);
             OnPropertyChanged();
             OnPropertyChanged(nameof(PreviewRepeatGapIsLit));
+            OnPropertyChanged(nameof(CanClearSlot));
 
             if (IsGraphicContent)
             {
                 UpdateActivePreview();
             }
+
+            RefreshPreparedUpload();
         }
     }
 
@@ -120,68 +134,99 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         : TextRepeatGapColumns;
 
     public bool PreviewRepeatGapIsLit =>
-        IsGraphicContent && _graphicState.IsInverted;
+        IsGraphicContent && SelectedSlot.GraphicState.IsInverted;
 
     public bool IsAnimationInverted
     {
-        get => _animationState.IsInverted;
+        get => SelectedSlot.AnimationState.IsInverted;
         set
         {
-            if (_animationState.Source is null || _animationState.IsInverted == value)
+            if (SelectedSlot.AnimationState.Source is null
+                || SelectedSlot.AnimationState.IsInverted == value)
             {
                 return;
             }
 
-            _animationState.SetInverted(value);
+            SelectedSlot.SetAnimationInverted(value);
             OnPropertyChanged();
+            OnPropertyChanged(nameof(CanClearSlot));
 
             if (IsAnimationContent)
             {
                 UpdateActivePreview();
             }
+
+            RefreshPreparedUpload();
         }
     }
 
     public string Message
     {
-        get => _message;
+        get => SelectedSlot.Message;
         set
         {
-            if (!SetField(ref _message, value ?? string.Empty))
+            var message = value ?? string.Empty;
+
+            if (SelectedSlot.Message == message)
             {
                 return;
             }
 
-            UpdateTextBitmap();
+            RenderTextIntoSlot(SelectedSlot, message);
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(CanClearSlot));
+
+            if (IsTextContent)
+            {
+                UpdateActivePreview();
+            }
+
+            RefreshPreparedUpload();
         }
     }
 
     public ModeOption SelectedMode
     {
-        get => _selectedMode;
+        get => Modes.First(option => option.Value == SelectedSlot.Mode);
         set
         {
-            if (value is null || !SetField(ref _selectedMode, value))
+            if (value is null || SelectedSlot.Mode == value.Value)
             {
                 return;
             }
 
+            SelectedSlot.Mode = value.Value;
+            OnPropertyChanged();
             OnPropertyChanged(nameof(IsPreviewScrolling));
+            OnPropertyChanged(nameof(CanClearSlot));
 
             if (IsGraphicContent)
             {
                 UpdateActivePreview();
             }
+
+            RefreshPreparedUpload();
         }
     }
 
     public bool IsPreviewScrolling =>
-        !IsAnimationContent && SelectedMode.Value == BadgeDisplayMode.ScrollLeft;
+        !IsAnimationContent && SelectedSlot.Mode == BadgeDisplayMode.ScrollLeft;
 
     public int Speed
     {
-        get => _speed;
-        set => SetField(ref _speed, value);
+        get => SelectedSlot.Speed;
+        set
+        {
+            if (SelectedSlot.Speed == value)
+            {
+                return;
+            }
+
+            SelectedSlot.Speed = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(CanClearSlot));
+            RefreshPreparedUpload();
+        }
     }
 
     public MonochromeBitmap PreviewBitmap
@@ -196,23 +241,21 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         private set => SetField(ref _previewAnimation, value);
     }
 
-    public string SelectedFileName
-    {
-        get => _selectedFileName;
-        private set => SetField(ref _selectedFileName, value);
-    }
+    public string SelectedFileName => SelectedSlot.GraphicFileName;
 
-    public string SelectedAnimationFileName
-    {
-        get => _selectedAnimationFileName;
-        private set => SetField(ref _selectedAnimationFileName, value);
-    }
+    public string SelectedAnimationFileName => SelectedSlot.AnimationFileName;
 
-    public string AnimationFrameCountText => _animationState.Source is { } animation
+    public string AnimationFrameCountText => SelectedSlot.AnimationState.Source is { } animation
         ? animation.FrameCount == 1
             ? "1 frame"
             : $"{animation.FrameCount} frames"
         : "No frames";
+
+    public string UploadSummaryText
+    {
+        get => _uploadSummaryText;
+        private set => SetField(ref _uploadSummaryText, value);
+    }
 
     public string StatusText
     {
@@ -225,24 +268,34 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         get => _isBusy;
         private set
         {
-            if (SetField(ref _isBusy, value))
+            if (!SetField(ref _isBusy, value))
             {
-                OnPropertyChanged(nameof(CanLoadGraphic));
-                OnPropertyChanged(nameof(CanInvertGraphic));
-                OnPropertyChanged(nameof(CanLoadAnimation));
-                OnPropertyChanged(nameof(CanInvertAnimation));
-                SendCommand.RaiseCanExecuteChanged();
+                return;
             }
+
+            OnPropertyChanged(nameof(CanLoadGraphic));
+            OnPropertyChanged(nameof(CanInvertGraphic));
+            OnPropertyChanged(nameof(CanLoadAnimation));
+            OnPropertyChanged(nameof(CanInvertAnimation));
+            OnPropertyChanged(nameof(CanClearSlot));
+            OnPropertyChanged(nameof(IsSlotSelectionEnabled));
+            SendCommand.RaiseCanExecuteChanged();
         }
     }
 
+    public bool IsSlotSelectionEnabled => !IsBusy;
+
     public bool CanLoadGraphic => !IsBusy;
 
-    public bool CanInvertGraphic => !IsBusy && _graphicState.Source is not null;
+    public bool CanInvertGraphic =>
+        !IsBusy && SelectedSlot.GraphicState.Source is not null;
 
     public bool CanLoadAnimation => !IsBusy;
 
-    public bool CanInvertAnimation => !IsBusy && _animationState.Source is not null;
+    public bool CanInvertAnimation =>
+        !IsBusy && SelectedSlot.AnimationState.Source is not null;
+
+    public bool CanClearSlot => !IsBusy && SelectedSlotHasStoredState();
 
     public void LoadGraphic(string path)
     {
@@ -254,16 +307,18 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         try
         {
             var bitmap = _controller.RenderImage(path);
-            _graphicState.Load(bitmap);
+            SelectedSlot.LoadGraphic(bitmap, Path.GetFileName(path));
             OnPropertyChanged(nameof(IsGraphicInverted));
-            OnPropertyChanged(nameof(PreviewRepeatGapIsLit));
+            OnPropertyChanged(nameof(SelectedFileName));
             OnPropertyChanged(nameof(CanInvertGraphic));
-            SelectedFileName = Path.GetFileName(path);
+            OnPropertyChanged(nameof(CanClearSlot));
 
             if (IsGraphicContent)
             {
                 UpdateActivePreview();
             }
+
+            RefreshPreparedUpload();
         }
         catch (Exception)
         {
@@ -272,8 +327,6 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                 StatusText = "Could not load this image. Choose a PNG, JPEG, or BMP file.";
             }
         }
-
-        SendCommand.RaiseCanExecuteChanged();
     }
 
     public void LoadAnimation(string path)
@@ -286,16 +339,19 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         try
         {
             var animation = _controller.RenderAnimation(path);
-            _animationState.Load(animation);
+            SelectedSlot.LoadAnimation(animation, Path.GetFileName(path));
             OnPropertyChanged(nameof(IsAnimationInverted));
+            OnPropertyChanged(nameof(SelectedAnimationFileName));
             OnPropertyChanged(nameof(AnimationFrameCountText));
             OnPropertyChanged(nameof(CanInvertAnimation));
-            SelectedAnimationFileName = Path.GetFileName(path);
+            OnPropertyChanged(nameof(CanClearSlot));
 
             if (IsAnimationContent)
             {
                 UpdateActivePreview();
             }
+
+            RefreshPreparedUpload();
         }
         catch (Exception)
         {
@@ -304,83 +360,42 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                 StatusText = "Could not load this animation. Choose an animated GIF file.";
             }
         }
-
-        SendCommand.RaiseCanExecuteChanged();
     }
 
-    private bool CanSend()
+    public void ClearSelectedSlot()
     {
         if (IsBusy)
-        {
-            return false;
-        }
-
-        return SelectedContent.Value switch
-        {
-            BadgeContentKind.Text =>
-                _textPreviewIsValid && !string.IsNullOrWhiteSpace(Message),
-            BadgeContentKind.Graphic => _graphicState.Source is { Width: > 0 },
-            BadgeContentKind.Animation => _animationState.Source is { FrameCount: > 0 },
-            _ => false,
-        };
-    }
-
-    private async Task SendAsync()
-    {
-        var contentKind = SelectedContent.Value;
-        var bitmap = contentKind switch
-        {
-            BadgeContentKind.Text => _textBitmap,
-            BadgeContentKind.Graphic => _graphicState.Current,
-            _ => null,
-        };
-        var animation = contentKind == BadgeContentKind.Animation
-            ? _animationState.Current
-            : null;
-
-        if (bitmap is null && animation is null)
         {
             return;
         }
 
-        var mode = SelectedMode.Value;
-        var repeatGapIsLit = contentKind == BadgeContentKind.Graphic
-            && _graphicState.IsInverted;
+        SelectedSlot.Clear();
+        RaiseSelectedSlotPropertiesChanged();
+        UpdateActivePreview();
+        RefreshPreparedUpload();
+    }
+
+    private bool CanSend() =>
+        !IsBusy && _preparedUpload is { PopulatedSlotCount: > 0 };
+
+    private async Task SendAsync()
+    {
+        var preparedUpload = _preparedUpload;
+
+        if (preparedUpload is null)
+        {
+            return;
+        }
 
         IsBusy = true;
         StatusText = "Connecting to badge…";
 
         try
         {
-            if (contentKind == BadgeContentKind.Graphic
-                && mode == BadgeDisplayMode.ScrollLeft)
-            {
-                // The firmware adds its own terminal display-width gap. Filling
-                // the documented upload capacity with four-column-spaced copies
-                // makes that unavoidable terminal gap occur much less often.
-                bitmap = MonochromeBitmapRepeater.RepeatToMaximumWidth(
-                    bitmap!,
-                    GraphicRepeatGapColumns,
-                    MaximumUploadBitmapWidth,
-                    gapValue: repeatGapIsLit);
-            }
-
-            if (contentKind == BadgeContentKind.Animation)
-            {
-                await _controller.SendAnimationAsync(animation!, Speed);
-            }
-            else
-            {
-                await _controller.SendAsync(bitmap!, mode, Speed);
-            }
-
-            StatusText = contentKind switch
-            {
-                BadgeContentKind.Text => "Message sent successfully.",
-                BadgeContentKind.Graphic => "Graphic sent successfully.",
-                BadgeContentKind.Animation => "Animation sent successfully.",
-                _ => "Content sent successfully.",
-            };
+            await _controller.SendPreparedUploadAsync(preparedUpload);
+            StatusText = preparedUpload.PopulatedSlotCount == 1
+                ? "1 slot sent successfully."
+                : $"{preparedUpload.PopulatedSlotCount} slots sent successfully.";
         }
         catch (BadgeDeviceNotFoundException)
         {
@@ -392,23 +407,11 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
         catch (BadgeDeviceWriteException)
         {
-            StatusText = contentKind switch
-            {
-                BadgeContentKind.Text => "Could not write the message to the badge.",
-                BadgeContentKind.Graphic => "Could not write the graphic to the badge.",
-                BadgeContentKind.Animation => "Could not write the animation to the badge.",
-                _ => "Could not write to the badge.",
-            };
+            StatusText = "Could not write the configured slots to the badge.";
         }
         catch (ArgumentException)
         {
-            StatusText = contentKind switch
-            {
-                BadgeContentKind.Text => "The message is too long for the badge.",
-                BadgeContentKind.Graphic => "The graphic is too wide for the badge.",
-                BadgeContentKind.Animation => "The animation has too many frames for the badge.",
-                _ => "The content is too large for the badge.",
-            };
+            StatusText = "The configured slots are too large for the badge.";
         }
         catch (Exception)
         {
@@ -420,43 +423,37 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
     }
 
-    private void UpdateTextBitmap()
+    private void RenderTextIntoSlot(BadgeSlotState slot, string message)
     {
-        if (string.IsNullOrWhiteSpace(Message))
+        if (string.IsNullOrWhiteSpace(message))
         {
-            _textBitmap = CreateEmptyBitmap();
-            _textPreviewIsValid = false;
-        }
-        else
-        {
-            try
-            {
-                _textBitmap = _controller.Render(Message);
-                _textPreviewIsValid = true;
-            }
-            catch (Exception)
-            {
-                _textBitmap = CreateEmptyBitmap();
-                _textPreviewIsValid = false;
-            }
+            slot.SetTextRenderResult(message, CreateEmptyBitmap(), isValid: false);
+            return;
         }
 
-        if (IsTextContent)
+        try
         {
-            UpdateActivePreview();
+            slot.SetTextRenderResult(
+                message,
+                _controller.Render(message),
+                isValid: true);
         }
-        else
+        catch (Exception)
         {
-            SendCommand.RaiseCanExecuteChanged();
+            slot.SetTextRenderResult(message, CreateEmptyBitmap(), isValid: false);
         }
     }
 
     private void UpdateActivePreview()
     {
+        // Clear both sources first so switching slots always restarts whichever
+        // preview timer becomes active, even when two slots share equal settings.
+        PreviewAnimation = null;
+        PreviewBitmap = CreateEmptyBitmap();
+
         if (IsAnimationContent)
         {
-            PreviewBitmap = CreateEmptyBitmap();
-            PreviewAnimation = _animationState.Current;
+            PreviewAnimation = SelectedSlot.AnimationState.Current;
 
             if (!IsBusy)
             {
@@ -467,23 +464,19 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
         else if (IsTextContent)
         {
-            PreviewAnimation = null;
-            PreviewBitmap = _textBitmap;
+            PreviewBitmap = SelectedSlot.TextBitmap;
 
             if (!IsBusy)
             {
                 StatusText = string.IsNullOrWhiteSpace(Message)
                     ? "Enter a message to send."
-                    : _textPreviewIsValid
+                    : SelectedSlot.TextPreviewIsValid
                         ? "Ready."
                         : "Could not render this message.";
             }
         }
-        else if (_graphicState.Current is not { } graphicBitmap)
+        else if (SelectedSlot.GraphicState.Current is not { } graphicBitmap)
         {
-            PreviewAnimation = null;
-            PreviewBitmap = CreateEmptyBitmap();
-
             if (!IsBusy)
             {
                 StatusText = "Load an image to send.";
@@ -491,8 +484,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
         else
         {
-            PreviewAnimation = null;
-            PreviewBitmap = SelectedMode.Value == BadgeDisplayMode.StaticCentered
+            PreviewBitmap = SelectedSlot.Mode == BadgeDisplayMode.StaticCentered
                 ? MonochromeBitmapViewport.Create(
                     graphicBitmap,
                     BadgeProtocol.DisplayWidth,
@@ -504,14 +496,114 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                 StatusText = "Ready.";
             }
         }
+    }
+
+    private void RefreshPreparedUpload()
+    {
+        var slotContents = Slots
+            .Select(CreateSlotContent)
+            .ToArray();
+        var populatedSlotCount = slotContents.Count(content => content is not null);
+
+        if (populatedSlotCount == 0)
+        {
+            _preparedUpload = null;
+            UploadSummaryText = "0 of 8 slots • Nothing to send";
+            SendCommand.RaiseCanExecuteChanged();
+            return;
+        }
+
+        try
+        {
+            _preparedUpload = _controller.PrepareSlots(slotContents);
+            UploadSummaryText =
+                $"{_preparedUpload.PopulatedSlotCount} of 8 slots • " +
+                $"{_preparedUpload.UploadSize:N0} / {BadgeProtocol.MaximumUploadSize:N0} bytes";
+        }
+        catch (ArgumentException)
+        {
+            _preparedUpload = null;
+            UploadSummaryText = $"{populatedSlotCount} of 8 slots • Too large for badge";
+        }
 
         SendCommand.RaiseCanExecuteChanged();
+    }
+
+    private static BadgeSlotContent? CreateSlotContent(BadgeSlotState slot) =>
+        slot.ContentKind switch
+        {
+            BadgeContentKind.Text when slot.TextPreviewIsValid
+                && !string.IsNullOrWhiteSpace(slot.Message) =>
+                new BadgeSlotContent(
+                    slot.TextBitmap,
+                    Animation: null,
+                    slot.Mode,
+                    slot.Speed,
+                    RepeatGraphic: false,
+                    RepeatGapIsLit: false),
+            BadgeContentKind.Graphic when slot.GraphicState.Current is { } bitmap =>
+                new BadgeSlotContent(
+                    bitmap,
+                    Animation: null,
+                    slot.Mode,
+                    slot.Speed,
+                    RepeatGraphic: slot.Mode == BadgeDisplayMode.ScrollLeft,
+                    RepeatGapIsLit: slot.GraphicState.IsInverted),
+            BadgeContentKind.Animation when slot.AnimationState.Current is { } animation =>
+                new BadgeSlotContent(
+                    Bitmap: null,
+                    animation,
+                    BadgeDisplayMode.Animation,
+                    slot.Speed,
+                    RepeatGraphic: false,
+                    RepeatGapIsLit: false),
+            _ => null,
+        };
+
+    private bool SelectedSlotHasStoredState() =>
+        !string.IsNullOrEmpty(SelectedSlot.Message)
+        || SelectedSlot.GraphicState.Source is not null
+        || SelectedSlot.AnimationState.Source is not null
+        || SelectedSlot.ContentKind != BadgeContentKind.Text
+        || SelectedSlot.Mode != BadgeDisplayMode.ScrollLeft
+        || SelectedSlot.Speed != 4;
+
+    private void RaiseSelectedSlotPropertiesChanged()
+    {
+        OnPropertyChanged(nameof(SelectedContent));
+        RaiseContentPropertiesChanged();
+        OnPropertyChanged(nameof(Message));
+        OnPropertyChanged(nameof(SelectedMode));
+        OnPropertyChanged(nameof(IsPreviewScrolling));
+        OnPropertyChanged(nameof(Speed));
+        OnPropertyChanged(nameof(IsGraphicInverted));
+        OnPropertyChanged(nameof(IsAnimationInverted));
+        OnPropertyChanged(nameof(SelectedFileName));
+        OnPropertyChanged(nameof(SelectedAnimationFileName));
+        OnPropertyChanged(nameof(AnimationFrameCountText));
+        OnPropertyChanged(nameof(CanInvertGraphic));
+        OnPropertyChanged(nameof(CanInvertAnimation));
+        OnPropertyChanged(nameof(CanClearSlot));
+    }
+
+    private void RaiseContentPropertiesChanged()
+    {
+        OnPropertyChanged(nameof(IsTextContent));
+        OnPropertyChanged(nameof(IsGraphicContent));
+        OnPropertyChanged(nameof(IsAnimationContent));
+        OnPropertyChanged(nameof(IsTextOrGraphicContent));
+        OnPropertyChanged(nameof(IsPreviewScrolling));
+        OnPropertyChanged(nameof(PreviewRepeatGap));
+        OnPropertyChanged(nameof(PreviewRepeatGapIsLit));
     }
 
     private static MonochromeBitmap CreateEmptyBitmap() =>
         new(0, BadgeBitmapPacker.RequiredHeight);
 
-    private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
+    private bool SetField<T>(
+        ref T field,
+        T value,
+        [CallerMemberName] string? propertyName = null)
     {
         if (EqualityComparer<T>.Default.Equals(field, value))
         {

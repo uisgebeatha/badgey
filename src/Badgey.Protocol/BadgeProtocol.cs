@@ -10,6 +10,7 @@ public static class BadgeProtocol
     public const int HeaderSize = 64;
     public const int PacketSize = 64;
     public const int MaximumUploadSize = 8192;
+    public const int MaximumSlotCount = 8;
     public const int AnimationFrameStorageWidth = 48;
     public const int AnimationFrameByteColumns = 6;
     public const int AnimationFrameDataSize = AnimationFrameByteColumns * DisplayHeight;
@@ -19,7 +20,7 @@ public static class BadgeProtocol
     private const int SettingsOffset = 8;
     private const int MessageLengthOffset = 16;
     private const int TimestampOffset = 38;
-    private const int SettingsSlotCount = 8;
+    private const int SettingsSlotCount = MaximumSlotCount;
 
     private static readonly byte[] HeaderTemplate =
     [
@@ -141,6 +142,102 @@ public static class BadgeProtocol
         return CreateUploadCore(bitmapData, BadgeDisplayMode.Animation, speed, timestamp);
     }
 
+    /// <summary>
+    /// Creates a packet-aligned upload for up to eight positional badge slots.
+    /// A null entry represents an empty slot and preserves its position.
+    /// </summary>
+    public static byte[] CreateMultiSlotUpload(
+        IReadOnlyList<BadgeSlotUpload?> slots)
+    {
+        return CreateMultiSlotUpload(slots, DateTime.Now);
+    }
+
+    /// <summary>
+    /// Creates a packet-aligned upload for up to eight positional badge slots
+    /// using an explicit timestamp.
+    /// </summary>
+    public static byte[] CreateMultiSlotUpload(
+        IReadOnlyList<BadgeSlotUpload?> slots,
+        DateTime timestamp)
+    {
+        ArgumentNullException.ThrowIfNull(slots);
+
+        if (slots.Count is < 1 or > MaximumSlotCount)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(slots),
+                slots.Count,
+                $"The upload must describe from 1 to {MaximumSlotCount} positional slots.");
+        }
+
+        long totalPayloadLength = 0;
+        var populatedSlotCount = 0;
+
+        for (var slotIndex = 0; slotIndex < slots.Count; slotIndex++)
+        {
+            var slot = slots[slotIndex];
+            if (slot is null)
+            {
+                continue;
+            }
+
+            ValidateSlot(slot, slotIndex);
+            totalPayloadLength += slot.PackedData.Length;
+            populatedSlotCount++;
+        }
+
+        if (populatedSlotCount == 0)
+        {
+            throw new ArgumentException(
+                "At least one badge slot must contain content.",
+                nameof(slots));
+        }
+
+        var unpaddedLength = HeaderSize + totalPayloadLength;
+        var uploadLength = ((unpaddedLength + PacketSize - 1) / PacketSize) * PacketSize;
+
+        if (uploadLength > MaximumUploadSize)
+        {
+            throw new ArgumentException(
+                $"The combined packet-aligned upload must not exceed {MaximumUploadSize} bytes.",
+                nameof(slots));
+        }
+
+        var upload = new byte[(int)uploadLength];
+        HeaderTemplate.CopyTo(upload, 0);
+
+        var payloadOffset = HeaderSize;
+
+        for (var slotIndex = 0; slotIndex < slots.Count; slotIndex++)
+        {
+            var slot = slots[slotIndex];
+            if (slot is null)
+            {
+                continue;
+            }
+
+            upload[SettingsOffset + slotIndex] =
+                (byte)(((slot.Speed - 1) << 4) | (byte)slot.Mode);
+
+            var lengthInByteColumns = slot.PackedData.Length / DisplayHeight;
+            var lengthOffset = MessageLengthOffset + (slotIndex * 2);
+            upload[lengthOffset] = (byte)(lengthInByteColumns >> 8);
+            upload[lengthOffset + 1] = (byte)lengthInByteColumns;
+
+            slot.PackedData.CopyTo(upload, payloadOffset);
+            payloadOffset += slot.PackedData.Length;
+        }
+
+        upload[TimestampOffset] = (byte)(timestamp.Year % 100);
+        upload[TimestampOffset + 1] = (byte)timestamp.Month;
+        upload[TimestampOffset + 2] = (byte)timestamp.Day;
+        upload[TimestampOffset + 3] = (byte)timestamp.Hour;
+        upload[TimestampOffset + 4] = (byte)timestamp.Minute;
+        upload[TimestampOffset + 5] = (byte)timestamp.Second;
+
+        return upload;
+    }
+
     private static byte[] CreateUploadCore(
         ReadOnlySpan<byte> bitmapData,
         BadgeDisplayMode mode,
@@ -208,6 +305,50 @@ public static class BadgeProtocol
         if (speed is < 1 or > 8)
         {
             throw new ArgumentOutOfRangeException(nameof(speed), speed, "Speed must be from 1 to 8.");
+        }
+    }
+
+    private static void ValidateSlot(BadgeSlotUpload slot, int slotIndex)
+    {
+        if (slot.Mode is not BadgeDisplayMode.ScrollLeft
+            and not BadgeDisplayMode.StaticCentered
+            and not BadgeDisplayMode.Animation)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(slot.Mode),
+                slot.Mode,
+                $"Slot {slotIndex + 1} uses an unsupported display mode.");
+        }
+
+        ValidateSpeed(slot.Speed);
+
+        if (slot.PackedData is null)
+        {
+            throw new ArgumentException(
+                $"Slot {slotIndex + 1} packed data must not be null.",
+                "slots");
+        }
+
+        if (slot.PackedData.Length == 0)
+        {
+            throw new ArgumentException(
+                $"Slot {slotIndex + 1} packed data must not be empty.",
+                "slots");
+        }
+
+        var requiredMultiple = slot.Mode == BadgeDisplayMode.Animation
+            ? AnimationFrameDataSize
+            : DisplayHeight;
+
+        if (slot.PackedData.Length % requiredMultiple != 0)
+        {
+            var description = slot.Mode == BadgeDisplayMode.Animation
+                ? $"complete {AnimationFrameDataSize}-byte animation frames"
+                : $"exactly {DisplayHeight} bytes per byte-column";
+
+            throw new ArgumentException(
+                $"Slot {slotIndex + 1} packed data must contain {description}.",
+                "slots");
         }
     }
 

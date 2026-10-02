@@ -275,4 +275,230 @@ public class BadgeProtocolTests
                 speed: 1,
                 TestTimestamp));
     }
+
+    [Fact]
+    public void CreateMultiSlotUpload_EncodesOnePopulatedSlotAndLeavesOthersEmpty()
+    {
+        var payload = Enumerable.Range(1, BadgeProtocol.DisplayHeight)
+            .Select(value => (byte)value)
+            .ToArray();
+
+        var upload = BadgeProtocol.CreateMultiSlotUpload(
+            [new BadgeSlotUpload(payload, BadgeDisplayMode.StaticCentered, Speed: 3)],
+            TestTimestamp);
+
+        Assert.Equal(0x24, upload[8]);
+        Assert.All(upload[9..16], value => Assert.Equal(0x40, value));
+        Assert.Equal(0x00, upload[16]);
+        Assert.Equal(0x01, upload[17]);
+        Assert.All(upload[18..32], value => Assert.Equal(0x00, value));
+        Assert.Equal(payload, upload[BadgeProtocol.HeaderSize..(BadgeProtocol.HeaderSize + payload.Length)]);
+        Assert.Equal(0, upload.Length % BadgeProtocol.PacketSize);
+    }
+
+    [Fact]
+    public void CreateMultiSlotUpload_EncodesMixedSlotSettingsLengthsAndPayloadOrder()
+    {
+        var text = Enumerable.Repeat((byte)0x11, BadgeProtocol.DisplayHeight).ToArray();
+        var graphic = Enumerable.Repeat((byte)0x22, BadgeProtocol.DisplayHeight * 2).ToArray();
+        var animation = Enumerable.Repeat(
+                (byte)0x33,
+                BadgeProtocol.AnimationFrameDataSize * 2)
+            .ToArray();
+
+        var upload = BadgeProtocol.CreateMultiSlotUpload(
+            [
+                new BadgeSlotUpload(text, BadgeDisplayMode.ScrollLeft, Speed: 2),
+                new BadgeSlotUpload(graphic, BadgeDisplayMode.StaticCentered, Speed: 7),
+                new BadgeSlotUpload(animation, BadgeDisplayMode.Animation, Speed: 8),
+            ],
+            TestTimestamp);
+
+        Assert.Equal(new byte[] { 0x10, 0x64, 0x75 }, upload[8..11]);
+        Assert.All(upload[11..16], value => Assert.Equal(0x40, value));
+        Assert.Equal(new byte[] { 0x00, 0x01, 0x00, 0x02, 0x00, 0x0C }, upload[16..22]);
+        Assert.All(upload[22..32], value => Assert.Equal(0x00, value));
+
+        var expectedPayload = text.Concat(graphic).Concat(animation).ToArray();
+        Assert.Equal(
+            expectedPayload,
+            upload[BadgeProtocol.HeaderSize..(BadgeProtocol.HeaderSize + expectedPayload.Length)]);
+    }
+
+    [Fact]
+    public void CreateMultiSlotUpload_EncodesAllEightSlotsIndependently()
+    {
+        var slots = Enumerable.Range(0, BadgeProtocol.MaximumSlotCount)
+            .Select(slotIndex => new BadgeSlotUpload(
+                Enumerable.Repeat(
+                        (byte)(slotIndex + 1),
+                        (slotIndex + 1) * BadgeProtocol.DisplayHeight)
+                    .ToArray(),
+                slotIndex % 2 == 0
+                    ? BadgeDisplayMode.ScrollLeft
+                    : BadgeDisplayMode.StaticCentered,
+                Speed: slotIndex + 1))
+            .ToArray();
+
+        var upload = BadgeProtocol.CreateMultiSlotUpload(slots, TestTimestamp);
+
+        for (var slotIndex = 0; slotIndex < BadgeProtocol.MaximumSlotCount; slotIndex++)
+        {
+            var expectedMode = slotIndex % 2 == 0 ? 0x00 : 0x04;
+            Assert.Equal(
+                (byte)((slotIndex << 4) | expectedMode),
+                upload[8 + slotIndex]);
+            Assert.Equal(0x00, upload[16 + (slotIndex * 2)]);
+            Assert.Equal((byte)(slotIndex + 1), upload[17 + (slotIndex * 2)]);
+        }
+
+        var expectedPayload = slots.SelectMany(slot => slot.PackedData).ToArray();
+        Assert.Equal(
+            expectedPayload,
+            upload[BadgeProtocol.HeaderSize..(BadgeProtocol.HeaderSize + expectedPayload.Length)]);
+    }
+
+    [Fact]
+    public void CreateMultiSlotUpload_PreservesEmptySlotBetweenPopulatedSlots()
+    {
+        var first = Enumerable.Repeat((byte)0xA1, BadgeProtocol.DisplayHeight).ToArray();
+        var third = Enumerable.Repeat((byte)0xC3, BadgeProtocol.DisplayHeight * 2).ToArray();
+
+        var upload = BadgeProtocol.CreateMultiSlotUpload(
+            [
+                new BadgeSlotUpload(first, BadgeDisplayMode.ScrollLeft, Speed: 1),
+                null,
+                new BadgeSlotUpload(third, BadgeDisplayMode.StaticCentered, Speed: 6),
+            ],
+            TestTimestamp);
+
+        Assert.Equal(0x00, upload[8]);
+        Assert.Equal(0x40, upload[9]);
+        Assert.Equal(0x54, upload[10]);
+        Assert.Equal(new byte[] { 0x00, 0x01, 0x00, 0x00, 0x00, 0x02 }, upload[16..22]);
+        Assert.Equal(
+            first.Concat(third),
+            upload[BadgeProtocol.HeaderSize..(BadgeProtocol.HeaderSize + first.Length + third.Length)]);
+    }
+
+    [Fact]
+    public void CreateMultiSlotUpload_AcceptsMaximumCombinedAlignedSize()
+    {
+        var first = new byte[369 * BadgeProtocol.DisplayHeight];
+        var second = new byte[369 * BadgeProtocol.DisplayHeight];
+
+        var upload = BadgeProtocol.CreateMultiSlotUpload(
+            [
+                new BadgeSlotUpload(first, BadgeDisplayMode.ScrollLeft, Speed: 1),
+                new BadgeSlotUpload(second, BadgeDisplayMode.StaticCentered, Speed: 8),
+            ],
+            TestTimestamp);
+
+        Assert.Equal(BadgeProtocol.MaximumUploadSize, upload.Length);
+    }
+
+    [Fact]
+    public void CreateMultiSlotUpload_RejectsOversizedCombinedUploadWithoutTruncating()
+    {
+        var first = new byte[400 * BadgeProtocol.DisplayHeight];
+        var second = new byte[339 * BadgeProtocol.DisplayHeight];
+
+        var exception = Assert.Throws<ArgumentException>(() =>
+            BadgeProtocol.CreateMultiSlotUpload(
+                [
+                    new BadgeSlotUpload(first, BadgeDisplayMode.ScrollLeft, Speed: 1),
+                    new BadgeSlotUpload(second, BadgeDisplayMode.StaticCentered, Speed: 8),
+                ],
+                TestTimestamp));
+
+        Assert.Contains(BadgeProtocol.MaximumUploadSize.ToString(), exception.Message);
+    }
+
+    [Fact]
+    public void CreateMultiSlotUpload_RejectsNullSlotCollection()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            BadgeProtocol.CreateMultiSlotUpload(null!, TestTimestamp));
+    }
+
+    [Fact]
+    public void CreateMultiSlotUpload_RejectsEmptySlotCollection()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            BadgeProtocol.CreateMultiSlotUpload([], TestTimestamp));
+    }
+
+    [Fact]
+    public void CreateMultiSlotUpload_RejectsMoreThanEightSlots()
+    {
+        BadgeSlotUpload?[] slots = new BadgeSlotUpload?[BadgeProtocol.MaximumSlotCount + 1];
+        slots[0] = new BadgeSlotUpload(
+            new byte[BadgeProtocol.DisplayHeight],
+            BadgeDisplayMode.ScrollLeft,
+            Speed: 1);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            BadgeProtocol.CreateMultiSlotUpload(slots, TestTimestamp));
+    }
+
+    [Fact]
+    public void CreateMultiSlotUpload_RejectsAllEmptySlots()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            BadgeProtocol.CreateMultiSlotUpload([null, null, null], TestTimestamp));
+    }
+
+    [Theory]
+    [InlineData(BadgeDisplayMode.ScrollLeft, 0)]
+    [InlineData(BadgeDisplayMode.StaticCentered, 10)]
+    [InlineData(BadgeDisplayMode.Animation, 65)]
+    [InlineData(BadgeDisplayMode.Animation, 67)]
+    public void CreateMultiSlotUpload_RejectsInvalidPackedPayload(
+        BadgeDisplayMode mode,
+        int payloadLength)
+    {
+        Assert.Throws<ArgumentException>(() =>
+            BadgeProtocol.CreateMultiSlotUpload(
+                [new BadgeSlotUpload(new byte[payloadLength], mode, Speed: 1)],
+                TestTimestamp));
+    }
+
+    [Fact]
+    public void CreateMultiSlotUpload_RejectsNullPackedPayload()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            BadgeProtocol.CreateMultiSlotUpload(
+                [new BadgeSlotUpload(null!, BadgeDisplayMode.ScrollLeft, Speed: 1)],
+                TestTimestamp));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(9)]
+    public void CreateMultiSlotUpload_RejectsInvalidSlotSpeed(int speed)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            BadgeProtocol.CreateMultiSlotUpload(
+                [
+                    new BadgeSlotUpload(
+                        new byte[BadgeProtocol.DisplayHeight],
+                        BadgeDisplayMode.ScrollLeft,
+                        speed),
+                ],
+                TestTimestamp));
+    }
+
+    [Fact]
+    public void CreateMultiSlotUpload_RejectsUnsupportedSlotMode()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            BadgeProtocol.CreateMultiSlotUpload(
+                [
+                    new BadgeSlotUpload(
+                        new byte[BadgeProtocol.DisplayHeight],
+                        (BadgeDisplayMode)1,
+                        Speed: 1),
+                ],
+                TestTimestamp));
+    }
 }

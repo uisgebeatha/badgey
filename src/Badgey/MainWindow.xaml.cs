@@ -53,4 +53,12 @@ public partial class MainWindow : Window
             viewModel.LoadAnimation(dialog.FileName);
         }
     }
+
+    private void ClearSlotButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel viewModel)
+        {
+            viewModel.ClearSelectedSlot();
+        }
+    }
 }

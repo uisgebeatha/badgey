@@ -51,6 +51,31 @@ public sealed class BadgeController
         return WriteUploadAsync(upload);
     }
 
+    /// <summary>
+    /// Prepares the exact packet-aligned bytes for all positional badge slots.
+    /// No hardware access occurs until <see cref="SendPreparedUploadAsync"/>.
+    /// </summary>
+    internal PreparedBadgeUpload PrepareSlots(
+        IReadOnlyList<BadgeSlotContent?> slots) =>
+        BadgeMultiSlotUploadComposer.Prepare(slots);
+
+    /// <summary>
+    /// Prepares a deterministic multi-slot upload for tests and diagnostics.
+    /// </summary>
+    internal PreparedBadgeUpload PrepareSlots(
+        IReadOnlyList<BadgeSlotContent?> slots,
+        DateTime timestamp) =>
+        BadgeMultiSlotUploadComposer.Prepare(slots, timestamp);
+
+    /// <summary>
+    /// Writes a previously prepared upload exactly once.
+    /// </summary>
+    internal Task SendPreparedUploadAsync(PreparedBadgeUpload preparedUpload)
+    {
+        ArgumentNullException.ThrowIfNull(preparedUpload);
+        return WriteUploadAsync(preparedUpload.Bytes);
+    }
+
     private static Task WriteUploadAsync(byte[] upload) =>
         Task.Run(() =>
         {

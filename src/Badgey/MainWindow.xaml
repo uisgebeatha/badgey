@@ -4,9 +4,9 @@
         xmlns:local="clr-namespace:Badgey"
         Title="Badgey"
         Width="620"
-        Height="500"
+        Height="550"
         MinWidth="540"
-        MinHeight="460"
+        MinHeight="500"
         WindowStartupLocation="CenterScreen"
         Background="#F4F5F6"
         UseLayoutRounding="True">
@@ -19,6 +19,7 @@
 
     <Grid Margin="24">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -37,6 +38,73 @@
         <Grid Grid.Row="1" Margin="0,0,0,14">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <TextBlock Grid.Column="0"
+                       Margin="0,0,8,0"
+                       VerticalAlignment="Center"
+                       Text="Slots" />
+            <ListBox Grid.Column="1"
+                     MinHeight="32"
+                     Margin="0,0,12,0"
+                     Padding="2"
+                     Background="White"
+                     BorderBrush="#CED3CF"
+                     BorderThickness="1"
+                     IsEnabled="{Binding IsSlotSelectionEnabled}"
+                     ItemsSource="{Binding Slots}"
+                     SelectedItem="{Binding SelectedSlot}">
+                <ListBox.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <UniformGrid Rows="1" Columns="8" />
+                    </ItemsPanelTemplate>
+                </ListBox.ItemsPanel>
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="Margin" Value="1" />
+                        <Setter Property="Padding" Value="3,2" />
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                    </Style>
+                </ListBox.ItemContainerStyle>
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <Grid MinWidth="30">
+                            <TextBlock HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       Text="{Binding SlotNumber}" />
+                            <Ellipse Width="6"
+                                     Height="6"
+                                     Margin="0,0,1,1"
+                                     HorizontalAlignment="Right"
+                                     VerticalAlignment="Bottom">
+                                <Ellipse.Style>
+                                    <Style TargetType="Ellipse">
+                                        <Setter Property="Fill" Value="#C7CBC8" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsPopulated}" Value="True">
+                                                <Setter Property="Fill" Value="#39B95A" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Ellipse.Style>
+                            </Ellipse>
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+            <Button Grid.Column="2"
+                    MinHeight="32"
+                    Padding="12,4"
+                    Click="ClearSlotButton_Click"
+                    Content="Clear Slot"
+                    IsEnabled="{Binding CanClearSlot}" />
+        </Grid>
+
+        <Grid Grid.Row="2" Margin="0,0,0,14">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="150" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
@@ -53,7 +121,7 @@
                       SelectedItem="{Binding SelectedContent}" />
         </Grid>
 
-        <Grid Grid.Row="2">
+        <Grid Grid.Row="3">
             <StackPanel Visibility="{Binding IsTextContent, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <TextBlock Margin="0,0,0,6"
                            FontWeight="SemiBold"
@@ -136,7 +204,7 @@
             </StackPanel>
         </Grid>
 
-        <Grid Grid.Row="3" Margin="0,16,0,18">
+        <Grid Grid.Row="4" Margin="0,16,0,18">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
@@ -177,10 +245,10 @@
                     Padding="16,6"
                     IsDefault="True"
                     Command="{Binding SendCommand}"
-                    Content="Send" />
+                    Content="Send All" />
         </Grid>
 
-        <Grid Grid.Row="4">
+        <Grid Grid.Row="5">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
@@ -211,16 +279,20 @@
             </Border>
         </Grid>
 
-        <Grid Grid.Row="5" Margin="0,16,0,0">
+        <Grid Grid.Row="6" Margin="0,16,0,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
-            <TextBlock Grid.Column="0"
-                       VerticalAlignment="Center"
-                       Foreground="#50545A"
-                       Text="{Binding StatusText}" />
+            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                <TextBlock Foreground="#50545A"
+                           Text="{Binding StatusText}" />
+                <TextBlock Margin="0,2,0,0"
+                           FontSize="11"
+                           Foreground="#73777D"
+                           Text="{Binding UploadSummaryText}" />
+            </StackPanel>
             <ProgressBar Grid.Column="1"
                          Width="92"
                          Height="4"
